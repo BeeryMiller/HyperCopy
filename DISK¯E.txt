@@ -1,0 +1,53 @@
+*** DISK/E ***
+
+DEFINITIONS:
+  BL   @READ   Read disk into memory
+                 In:  INDRV  = input drive (byte)
+                      MEMMAP = memory page list, starting with local
+                               page 3.
+                      PAGES  = pages available for disk stuff (word)
+                      SEC0   = sector 0 buffer (and all the byte values
+                               it contains)
+                      SKEWI  = skew for input disk
+                      ILACEI = interlace for input disk
+                 Out: INMEM = >FF if entire disk in memory
+
+  BL   @WRITE  Writes buffer to disk
+                 In:  OUTDRV = output drive (byte)
+                      MEMMAP = memory page list, starting with local
+                               page 3.
+                      PAGES  = pages available for disk stuff (word)
+                      VERIFY = 'Y' to verify, 'N' to not
+                      SEC0   = sector 0 buffer (and all the byte values
+                               it contains)
+                      SKEWO  = skew for output disk
+                      ILACEO = interlace for output disk
+
+  BL   @FORMAT Formats disk (Writes SEC0 to sector 0 and nulls to sector 1)
+                 In:  OUTDRV = drive to format (byte)
+                      SIDES  = sides - 1 or 2 (byte)
+                      DENS   = density - 1 or 2 (byte)
+                      TRACKS = tracks - 40 or 80 (byte)
+                      ILACEO = interlace (byte) - ignored if logical drive
+                      SKEWO  = skew (byte) - ignored if logical drive
+
+  BL   @GPI    Gets sector 0, skew, and interlace of input disk
+                 In:  INDRV  = drive number
+                 Out: SKEWI  = skew
+                      ILACEI = interlace
+                      NUMTRK = number of tracks can store in memory
+
+  BL   @GPO    Gets skew and interlace of output disk
+                 In:  OUTDRV = drive number
+                 Out: SKEWO  = skew
+                      ILACEO = interlace
+
+  BL   @SETUP  Required for initializing certain values used by COPY,
+                 WRITE, and FORMAT.
+
+  DATA RREG    MSBy is track number on BL @READ operation
+
+  DATA WREG    MSBy is track number on BL @WRITE operation
+
+  DATA NUMTRK  Word is number of tracks can store in memory
+

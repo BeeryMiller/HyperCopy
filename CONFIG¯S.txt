@@ -1,0 +1,262 @@
+*** CONFIG/S ***
+*
+* configure defaults screen
+*
+       DEF  CONFIG
+       REF  BINASC,ASCBIN,SCRGEN
+       REF  INPUT,FCTNX,DEFSID
+       REF  TEMP,VMBW,VSBW,MENU
+       REF  VALSD,VALNUM,VALYN
+       REF  CLS,BREAD,BWRITE,SECCAL
+       REF  SADDR,SSEC,SNUM,SLEN,SDEV
+       REF  ERROR,MOVE
+*
+       DXOP SYS,0
+*
+WID    EQU  40
+*
+*  screen layout
+CFTXT1 BYTE 8,11
+       TEXT 'Configure Defaults`'
+       BYTE 10,15
+       TEXT '1`'
+       BYTE 10,20
+       TEXT '2`'
+       BYTE 10,25
+       TEXT '3`'
+       BYTE 10,30
+       TEXT '4`'
+       BYTE 11,4
+       TEXT 'Sides:\'
+       TEXT 'Density:`'
+       BYTE 14,18
+       TEXT '9`'
+       BYTE 14,24
+       TEXT '16`'
+       BYTE 14,30
+       TEXT '18`'
+       BYTE 15,4
+       TEXT 'Interlace:\'
+       TEXT 'Skew:\\'
+       TEXT 'Verify (Y/N):`'
+       BYTE 21,5
+       TEXT 'Press <ESC> to exit, F6 to save~'
+*
+CFTXT2 BYTE 8,11
+       TEXT 'Configure Defaults`'
+       BYTE 10,3
+       TEXT 'Save filename:~'
+*
+H00    BYTE >00
+H01    BYTE >01
+H0A    BYTE >0A
+H0B    BYTE >0B
+H0C    BYTE >0C               F6 key
+H0F    BYTE >0F               F9 key
+H12    BYTE >12
+H1B    BYTE >1B               ESC key
+H20    BYTE >20
+H28    BYTE >28
+*
+       EVEN
+*
+CONVAL DATA VALSD
+       DATA VALNUM
+       DATA VALYN
+UTIL   DATA 9
+DSR    DATA 8
+*
+* Table: 0 screen address (word)
+*        2 offset from DEFSID to store response (byte)
+*        3 maximum length of input (byte)
+*        4 offset into table of valid keypresses (byte)
+*        5 offset into this table of up arrow key
+CONTAB DATA 11*WID+15,>0001,>0000   DSK1 sides             00
+       DATA 12*WID+15,>0401,>0000   DSK1 density           06
+       DATA 11*WID+20,>0101,>000C   DSK2 sides             0C
+       DATA 12*WID+20,>0501,>000C   DSK2 density           12
+       DATA 11*WID+25,>0201,>0018   DSK3 sides             18
+       DATA 12*WID+25,>0601,>0018   DSK3 density           1E
+       DATA 11*WID+30,>0301,>0024   DSK4 sides             24
+       DATA 12*WID+30,>0701,>0024   DSK4 density           2A
+       DATA 15*WID+18,>0801,>0206   Interlace 9            30
+       DATA 16*WID+18,>0901,>0230   Skew 9                 36
+       DATA 15*WID+24,>0A02,>0206   Interlace 16           3C
+       DATA 16*WID+24,>0B02,>023C   Skew 16                42
+       DATA 15*WID+30,>0C02,>0206   Interlace 18           48
+       DATA 16*WID+30,>0D02,>0242   Skew 18                4E
+       DATA 18*WID+18,>0E01,>0430   Verify yes/no          54
+       DATA >0000                   End of table
+*
+CONFIG BL   @CLS              Clear screen
+       BL   @SCRGEN           Generate screen
+       DATA CFTXT1
+*  fill in the blanks with current defaults
+       LI   R6,CONTAB         Table
+CF01   MOVB @2(R6),R2         Get offset of current value
+       SRL  R2,8              To LSBy
+       AI   R2,DEFSID
+       MOVB *R2,R0            Get number
+       CB   R0,@H20           ASCII?
+       JHE  CF02              Yes
+       LI   R2,TEMP
+       BL   @BINASC           Convert
+       MOV  *R6+,R0           Get screen address
+       MOV  R2,R1             Get address
+       MOVB *R1+,R2           Get length
+       SRL  R2,8              To LSBy
+       BLWP @VMBW
+       JMP  CF03              Do next one
+*   display ASCII value
+CF02   MOVB R0,R1
+       MOV  *R6+,R0           Get screen address
+       BLWP @VSBW             Display on screen
+CF03   C    *R6+,*R6+         Add four
+       MOV  *R6,R0            Any more to do?
+       JNE  CF01              Yes
+*  everything on screen
+       CLR  R6                Offset into CONTAB
+       CLR  @FCTNX            Allow down arrow & F6 as abort
+CF04   MOV  @CONTAB+2(R6),R1  Get offset into DEFSID of value
+       SRL  R1,8
+       MOVB @DEFSID(R1),R0
+       LI   R2,TEMP
+       CB   R0,@H20           ASCII?
+       JHE  CF05              Yes
+       BL   @BINASC           Convert
+       CLR  R7                Indicate binary
+       JMP  CF05A             Carry on. . .
+*   ASCII value
+CF05   MOVB @H01,*R2
+       MOVB R0,@1(R2)
+       SETO R7                Indicate ASCII
+*   TEMP loaded
+CF05A  MOV  @CONTAB(R6),R0    Get screen address
+       MOV  R2,R1             CPU address
+       MOVB @CONTAB+3(R6),R2  Get maximum length
+       SRL  R2,8              To LSBy
+       MOVB @CONTAB+4(R6),R3  Get valid keypress pointer offset
+       SRL  R3,8              To LSBy
+       MOV  @CONVAL(R3),@CF06 Get it
+       BLWP @INPUT            Read input
+CF06   DATA >0000             Filled in above
+       STST R15               Save status
+       MOVB R2,R5             Save in case abort key
+       MOVB *R1,R0            Get length
+       JEQ  CF04              Null length _not allowed_
+       MOVB @CONTAB+2(R6),R4
+       SRL  R4,8
+       AI   R4,DEFSID         Now points to where to store this sucker
+       LI   R2,TEMP
+       ABS  R7
+       JEQ  CF06A             Binary
+       MOVB @1(R2),*R4        Store ASCII value
+       JMP  CF06B             Return
+CF06A  MOV  R2,R0
+       BL   @ASCBIN
+       CB   R1,@H12           Greater than 18?
+       JH   CF04              Yes - illegal... get input again
+       MOVB R1,*R4            Store
+*
+CF06B  SRL  R15,14            see if EQ bit set
+       JNC  CF11              Abort key not used
+       CB   R5,@H0B           Up arrow?
+       JNE  CF08              No
+       CI   R6,>54            In third block?
+       JEQ  CF07              Yes
+       CLR  R6                Place in first block
+       JMP  CF04
+CF07   LI   R6,>30            Second main block
+       JMP  CF04
+CF08   CB   R5,@H0A           Down arrow?
+       JNE  CF10              No
+       CI   R6,>30            Second or third block?
+       JHE  CF09              Yes
+       LI   R6,>30            Second block
+       JMP  CF04
+CF09   LI   R6,>54            Third block
+       JMP  CF04
+CF10   SETO @FCTNX            Return to normal
+       CB   R5,@H0C           F6 key?
+       JEQ  CF12              Yes -- save
+       B    @MENU             Return to main menu
+*
+CF11   AI   R6,6              To next field
+       MOV  @CONTAB(R6),R0    At end?
+       JNE  CF04              Nope
+       CLR  R6
+       JMP  CF04
+*
+* Save changes
+CF12   BL   @CLS              Clear screen
+       BL   @SCRGEN           Generate screen
+       DATA CFTXT2
+       LI   R0,11*WID+3       Screen address
+       LI   R1,TEMP
+       LI   R2,34
+       MOVB @H00,*R1
+       BLWP @INPUT
+       DATA >0000             Anything is allowed
+       JNE  CF13              No abort key used
+       B    @MENU             Return to main menu
+CF13   LI   R0,8              Parse filename opcode
+       MOVB *R1+,R2           Get length
+       SRL  R2,8              To LSBy
+       A    R1,R2             Point to last used byte
+       MOVB @H00,*R2          Null terminates
+       LI   R2,SLEN
+       CLR  R3
+       MOVB @H28,*R2          Maximum length
+       SYS  @UTIL             Utility library
+*
+       MOVB @BREAD,@SECCAL    Set read
+       LI   R0,SADDR
+       MOVB @H00,*R0+         First byte is >00
+       LI   R1,>6000
+       MOV  R1,*R0            Set address
+       CLR  @SSEC
+       LI   R0,1
+       MOV  R0,@SNUM
+       LI   R0,SECCAL
+       SYS  @DSR              DSR xop
+       LI   R1,SECCAL
+       MOVB @2(R1),R0
+       SRL  R0,13
+       JEQ  CF16              No error
+CF14   CI   R0,1              Write protect error?
+       JEQ  CF15
+       LI   R0,2              Hardware error
+CF15   B    @ERROR
+*
+CF16   BL   @MOVE             Move
+       DATA >0400,>6006,>FA   Rest of sector 0 (after header)
+*  now encode the bloody thing, as it is PLINKed (protected linker)
+       LI   R3,>6006
+       LI   R2,>00FA
+       LI   R5,>A006
+CF17   MOV  *R3,R6
+       XOR  R5,R6
+       SRC  R6,5
+       INV  R6
+       MOV  R6,*R3+
+       INCT R5
+       DECT R2
+       JNE  CF17
+       MOVB @BWRITE,@SECCAL   Set write
+       LI   R0,SADDR
+       MOVB @H00,*R0+         First byte is >00
+       LI   R1,>6000
+       MOV  R1,*R0            Set address
+       CLR  @SSEC
+       LI   R0,1
+       MOV  R0,@SNUM
+       LI   R0,SECCAL
+       SYS  @DSR              DSR xop
+       LI   R1,SECCAL
+       MOVB @2(R1),R0
+       SRL  R0,13
+       JNE  CF14              Error
+       B    @MENU             Return to menu
+*
+*
+       END

@@ -1,0 +1,231 @@
+* Input routine. by J. Peter Hoddie.
+* Modified for MDOS mode by Mike Dodd.
+* Many other mods also by MDD.
+*
+       DEF  INPUT,FCTNX
+       REF  VSBW,VMBW
+*
+       DXOP SYS,0
+*
+INPWS  EQU  >F020
+VDPA   EQU  >F10A
+VDPD   EQU  >F108
+INPUT  DATA INPWS,INP00
+H2000  DATA >2000
+FCTNX  DATA >0000             if >ffff, then treat down arrow as <enter>
+*
+KEY    DATA 5
+*
+INPCUR BYTE 95
+INPKEY BYTE 15
+       BYTE 8,9
+       BYTE 3,4,7
+       BYTE 1
+       BYTE 13
+       BYTE 27
+       BYTE 10,11
+       BYTE 12
+       BYTE 0
+*
+INPTAB DATA INP50
+       DATA INP40,INP35
+       DATA INP60,INP70,INP80 delete,insert,dellin
+       DATA INP85             end of line
+INPTEN DATA INPEXT
+       DATA INP50             abort
+INPTDN DATA INP50,INP50
+INPTF6 DATA INP50
+*
+INP00  MOV  *R13,R10          get screen address
+       MOV  @2(R13),R11       get CPU address (length byte first)
+       MOV  @4(R13),R7        get maximum length
+       ANDI R15,>DFFF         reset EQ bit
+*
+       CLR  R8                current position offset...
+       CLR  R9                first time flag...
+       MOV  @INPTEN,@INPTDN   Assume down arrow is <enter>
+       MOV  @INPTEN,@INPTF6   Assume F6 is <enter>
+       ABS  @FCTNX
+       JNE  INP02             That is so
+       MOV  @INPTDN+2,@INPTDN That is not so... make it an abort key
+       MOV  @INPTDN+2,@INPTF6 same for F6 key
+*      display current buffer...
+INP02  MOV  R11,R1            get cpu address copy
+       MOV  R10,R0
+       MOV  R9,R9             first time?
+       JEQ  INP03              yes
+       MOV  R7,R2              no, so use full string length
+       INC  R1                 skip length byte
+       JMP  INP04              common again
+INP03  MOVB *R1+,R2           get default length
+       SETO R9                not the first time anymore
+       SRL  R2,8              as a word
+       JEQ  INP04A             none..so just blank remaining
+INP04  BLWP @VMBW             put up current text...
+INP04A A    R2,R0             increment screen position
+       A    R2,R1
+       NEG  R2
+       A    R7,R2            r2=blank count
+*      blank remaining area....
+INP05  LI   R3,'  '
+       MOV  R2,R2
+       JEQ  INP10             no blanks to draw....
+       LIMI 0                 Interrupts off
+       SWPB R0
+       MOVB R0,@VDPA
+       SWPB R0
+       ORI  R0,>4000
+       MOVB R0,@VDPA
+       SWPB R0
+INP06  MOVB R3,*R1+           blank buffer
+       MOVB R3,@VDPD          blank screen
+       DEC  R2
+       JNE  INP06
+       LIMI 2                 Back on
+*
+INP10  MOVB @INPCUR,R5        get cursor character
+       SWPB R5
+       MOV  R11,R2
+       INC  R2
+       A    R8,R2
+       MOVB *R2,R5            get character under cursor
+*
+INP15  MOV  @INPWAI,@TIMER    reset timer
+       SWPB R5
+       MOVB R5,R1
+       MOV  R10,R0
+       A    R8,R0
+       BLWP @VSBW             put up a cursor...
+*
+INP20  DEC  @TIMER
+       JEQ  INP15             blink
+*
+       LI   R0,3              Key mode 3
+       MOV  *R14,R1           Validation in effect?
+       JNE  INP20A            Yes
+       INCT R0                Then use key mode 5
+INP20A SYS  @KEY              Keyscan
+       JNE  INP20             No new key
+       ANDI R1,>7F00          Mask out high bit and LSBy
+       MOVB R1,R3             get the actual keypress..
+       MOV  R10,R0
+       A    R8,R0             cursor location on screen
+       MOV  R11,R1
+       INC  R1
+       A    R8,R1
+       MOVB *R1,R1            get character under cursor...
+       BLWP @VSBW             redraw under cursor..
+*
+       LI   R2,INPKEY
+       MOV  R2,R0
+INP22  MOVB *R2,*R2
+       JEQ  INP30             normal keypress
+       CB   R3,*R2+
+       JNE  INP22
+       S    R0,R2
+       DEC  R2
+       SLA  R2,1
+       MOV  @INPTAB(R2),R2    get routine to perform
+       B    *R2
+*
+*  if validation in effect, check that
+INP30  MOV  *R14,R0           Get pointer to validation string
+       JEQ  INP30B            No validation needed
+INP30A MOVB *R0+,R2           Get key to compare to
+       JEQ  INP20             End of list - ignore key
+       CB   R2,R3             Valid key?
+       JNE  INP30A            No
+INP30B MOVB R3,R1
+       SRL  R1,8
+       CI   R1,32
+       JLT  INP20             don't deal with control characters
+       MOV  R11,R1
+       INC  R1
+       A    R8,R1
+       MOVB R3,*R1            install character in buffer
+*
+       MOV  R10,R0
+       A    R8,R0
+       MOVB R3,R1
+       BLWP @VSBW             show character on screen
+*   addition by MDD . . . if max length = 1, doesn't require <ENTER>
+       CI   R7,1              Is max length 1?
+       JEQ  INPEXT            Nope.... go right, my friend, go right...
+
+*      right
+INP35  INC  R8                next character
+       C    R8,R7             did we go to far?
+       JNE  INP10              no, wait for next key & put up cursor
+       DEC  R8                 yes, so hold on last character
+       JMP  INP10              and wait for next key & put up cursor
+*      left
+INP40  MOV  R8,R8             at beginning?
+       JEQ  INP41
+       DEC  R8
+INP41  JMP  INP10
+*      back (or escape)
+INP50  CLR  @4(R13)           Clear LSBy of R2
+       MOVB R3,@4(R13)        Set key used for abort
+       ORI  R15,>2000         set EQ bit
+       JMP  INPEXT
+*      delete char
+INP60  MOV  R11,R3            CPU address
+       A    R7,R3            point to end of string...
+       MOV  R11,R2
+       INC  R2
+       A    R8,R2             first character to delete...
+INP61  MOVB @1(R2),*R2        pull back one...
+       C    R2,R3             are we done?
+       JEQ  INP62              yes
+       INC  R2                next location
+       JMP  INP61
+INP62  MOVB @INPSPC,*R3        space at the end...
+       JMP  INPRED             redraw
+*      insert char
+INP70  MOV  R11,R3
+       A    R7,R3            last char in string
+       MOV  R11,R2
+       INC  R2
+       A    R8,R2             current cursor
+INP71  MOVB @-1(R3),*R3       move a character forward
+       C    R2,R3             done?
+       JEQ  INP62              yes
+       DEC  R3
+       JMP  INP71
+*      clear entire field...
+INP80  CLR  R8                homes cursor
+       MOV  R11,R1
+       MOV  R7,R2
+       INC  R1
+INP82  MOVB @INPSPC,*R1+       blank out buffer..
+       DEC  R2
+       JNE  INP82
+INPRED B    @INP02            redraw the buffer...
+*      end of line
+INP85  MOV  R7,R8
+       DEC  R8
+       JMP  INP41             don't redraw but new cursor...
+*
+INPEXT MOV  R7,R2
+       MOV  R11,R4
+       A    R2,R4             point to last character in buffer
+       LI   R3,'  '
+INPSPC EQU  $-1
+INPEX1 CB   *R4,R3            space?
+       JNE  INPEX5
+       DEC  R4
+       DEC  R2                one less character
+       JNE  INPEX1
+       COC  @H2000,R15        is EQ bit on?
+       JEQ  INPEX5            Yup... don't worry if null field
+       B    @INP20            Null field not allowed
+INPEX5 SWPB R2
+       MOVB R2,*R11           install new length byte...
+*
+       INCT R14               Past validation string
+       RTWP                   and return
+*
+TIMER  DATA 0
+INPWAI DATA 500
+*
+       END

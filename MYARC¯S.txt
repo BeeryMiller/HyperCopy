@@ -1,0 +1,501 @@
+*** MYARC/S ***
+*  low level disk routines for MYARC disk controller
+
+       DEF  TRK00,RSETDS
+       DEF  STEP,SETR,SETW,RSEC
+       DEF  WSEC,RADDR,SELDRV,WTRK
+       DEF  SETI,SEEK,MOVE,MOVE1
+       DEF  MOVE2,SVMEM,RSMEM
+       DEF  GETDEN,TRAK,BUSY
+       DEF  STEPB,DCCTYP,MOVER
+       DEF  TRKDRV,BUSYND,STPDRV
+       REF  TRACKS,CURDRV,ERROR,DENS
+       REF  LSTDRV
+
+* EQUates
+DCCTYP EQU  >0000             MYARC id
+*
+XSECWS EQU  >F020             In fast RAM
+DSKSUB EQU  >F040
+MAPPER EQU  >F110
+*  FDC Registers
+FDSTAT EQU  >DF01             Status - read only
+FDCOM  EQU  >DF01             Command - write only
+FDTRAK EQU  >DF03             Track
+FDSEC  EQU  >DF05             Sector
+FDDATA EQU  >DF07             Data
+*  CRU bits
+*   Output
+FDON   EQU  0                 On/Off
+FDRSET EQU  1                 Reset FDC
+FDSIDE EQU  2                 Side select
+FDDENS EQU  3                 Density (0=double, 1=single)
+*   Input
+FDINT  EQU  0                 Interrupt
+FDDRQ  EQU  1                 Data Request
+FDVERF EQU  2                 Verify on write (0=don't)
+
+TRKDRV BSS  4                 Stores tracks per physical disk drive
+STPDRV BSS  4                 Step rate
+
+PADBUF BSS  >C0
+
+* BYTE
+H01    BYTE >01
+DSRVER BYTE >00
+H02    BYTE >02
+H03    BYTE >03
+H04    BYTE >04
+H00    BYTE >00
+H28    BYTE >28
+H50    BYTE >50
+HFF    BYTE >FF
+TRAK   BYTE >00
+FSEEK  BYTE >10               FDC Seek command
+FSTEP  BYTE >40               FDC Step In command
+FRSEC  BYTE >80               FDC Read Sector command
+FWSEC  BYTE >A0               FDC Write Sector command
+FRADD  BYTE >C0               FDC Read Address command
+FSTOP  BYTE >D8               FDC Force Interrupt command
+FRTRK  BYTE >E0               FDC Read Track command
+FWTRK  BYTE >F0               FDC Write Track command
+WRTDEL BYTE >00               Write delay OR value
+STPRAT BYTE >00               Step rate for current drive
+       EVEN
+
+* Save DSKSUB - >F0FF
+SVMEM  DATA XSECWS,SVMEM1
+SVMEM1 BL   @MOVE
+       DATA DSKSUB,PADBUF,>C0
+       RTWP
+
+* Restore DSKSUB - >F0FF
+RSMEM  DATA XSECWS,SVMEM1
+RSMEM1 BL   @MOVE
+       DATA PADBUF,DSKSUB,>C0
+       RTWP
+
+SETI   DATA XSECWS,SETI1
+SETI1  BL   @MOVE
+       DATA WTDAT,DSKSUB+WSLEN,WTLEN  Past write sector call
+       RTWP
+
+SETR   DATA XSECWS,SETR1
+SETR1  BL   @MOVE
+       DATA RSDAT,DSKSUB,RSLEN
+       RTWP
+
+SETW   DATA XSECWS,SETW1
+SETW1  BL   @MOVE
+       DATA WSDAT,DSKSUB,WSLEN
+       RTWP
+
+RSETDS LI   R12,>1100
+       SBO  0
+       MOVB @FSTOP,@FDCOM     Stop all FDC commands
+       LI   R0,60
+       DEC  R0
+       JNE  $-2
+       SBZ  FDRSET
+       LI   R0,60
+       DEC  R0
+       JNE  $-2
+       SBO  FDRSET            You don't bring this high, you don't do shit.
+       SBZ  FDSIDE            Select side 0
+       SBZ  0                 Turn off card
+       RT                     Return
+
+* BLWP @STEP - step with a busy check at end
+STEP   DATA XSECWS,STEP1
+STEP1  MOVB @FSTEP,R10
+       SOCB @STPRAT,R10       Set step rate
+       MOVB R10,@FDCOM
+       MOVB @H04,@WRTDEL      Write delay on
+       BLWP @BUSY
+       BL   @DRV80
+       JEQ  STEP2
+       CB   @TRACKS,@H50      80 track disk?
+       JEQ  STEP2             Yes - don't double step
+       MOVB R10,@FDCOM
+       BLWP @BUSY
+STEP2  AB   @H01,@TRAK        Increment track register
+       MOVB @TRAK,@FDTRAK     Set track
+       RTWP                   Return
+
+* BLWP @STEPB - step without a busy check at end
+STEPB  DATA XSECWS,STEPB1
+STEPB1 MOVB @FSTEP,R10
+       SOCB @STPRAT,R10       Set step rate
+       MOVB R10,@FDCOM
+       MOVB @H04,@WRTDEL      Write delay on
+       BL   @DRV80
+       JEQ  STEP2
+       CB   @TRACKS,@H50      80 track disk?
+       JEQ  STEP2             Yes - don't double step
+       BLWP @BUSY
+       MOVB @FSTEP,@FDCOM
+       JMP  STEP2
+
+TRK00  DATA XSECWS,TRK00X
+TRK00X SBO  0
+       SBZ  FDSIDE            Side select 0
+       MOVB @H04,@WRTDEL      Turn write delay on
+       MOVB @H00,@TRAK        Track = 0
+       MOVB @STPRAT,@FDCOM    restore, no verify (with whatever step rate)
+       B    @SEEK3            Special type of busy command
+DSRERR LI   R0,2              Hardware error
+       B    @ERROR
+
+* ROUTINE TO WRITE MYARC FDC UNTIL ALL BYTES PROCESSED
+WTDAT  MOVB @FWTRK,R7                        Write track command
+       SOCB @WRTDEL,R7                       Write delay (if needed)
+       MOVB @H00,@WRTDEL                     Null write delay
+       MOVB R7,@FDCOM                        Write command
+*
+       LI   R4,30
+WTDAT0 DEC  R4
+       JNE  WTDAT0
+*
+WTDAT1 TB   FDDRQ                            DRQ?
+       JEQ  WTDAT3                           yes - read a byte
+       DEC  R2                               try again?
+       JNE  WTDAT1                           yeah
+       DEC  R3
+       JNE  WTDAT1
+       RT                                    go to error routine
+WTDAT2 TB   FDDRQ                            DRQ?
+       JNE  WTDAT2                           no - try again
+WTDAT3 MOVB *R0+,*R5                         write a byte to FDC
+       DEC  R1                               any more to write?
+       JNE  WTDAT2                           yes, sure are
+*WTDAT4 MOVB R4,*R5
+*       TB   FDINT
+*       JNE  WTDAT4
+*       RT
+WTDAT4 TB   FDINT
+       JEQ  WTDAT5
+WTDAT6 TB   FDDRQ
+       JNE  WTDAT4
+       MOVB R4,*R5
+       JMP  WTDAT4
+WTDAT5 RT                                    no - return
+WTLEN  EQU  $-WTDAT           Length of above
+
+WTRK   DATA XSECWS,WTRK1
+WTRK1  MOV  *R13,R0           buffer addr
+       MOV  @2(R13),R1        Length
+       CLR  R2                timer
+       LI   R3,5
+       MOVB *R0,R4            filler byte
+       LI   R5,FDDATA
+       BL   @DSKSUB+WSLEN     Past write sector call
+       ABS  R3                did it time out?
+       JEQ  DSRERR            damn..... yes
+       BLWP @BUSYND           what the hell
+       RTWP
+
+* Determine if 80 track drive or not.
+*  Out: EQ if _not_ 80 track drive
+*  Regs: R3
+DRV80  MOVB @CURDRV,R3                Get current drive number
+       SRL  R3,8                      To LSBy
+       CB   @TRKDRV-1(R3),@H28        40 tracks? (use base 0)
+       RT                             Return
+
+* Select drive.
+*  In: R1 = drive number (word)
+*  Regs: R3
+SELDRV CI   R1,5              Over 4? (would have to be a RAMdisk)
+       JHE  SELDR1            Yes
+       LI   R12,>1108         Point to drive numbers
+       LDCR @H00,4            Null all disk drive numbers
+       LI   R3,>1CFF          SBO -1 (not really, but it has that
+*                                     general effect)
+       A    R1,R3             Plus drive number
+       X    R3                Execute the SBO instruction
+       LI   R3,LSTDRV
+       MOV  @MAPPER+4,R12     Save mapper registers
+       MOV  *R3+,@MAPPER+4    Set mapper registers
+       MOV  *R3,R0            Get address of LSTDRV
+       SETO *R0               Let MDOS worry about everything
+       MOV  R12,@MAPPER+4     Restore mapper registers
+       LI   R12,>1100         Restore CRU base
+       MOVB @H04,@WRTDEL      Turn write delay on
+       MOVB @STPDRV-1(R1),@STPRAT   Set current step rate
+SELDR1 RT                     Return
+
+* Seek to track
+*  In: MSBy R0 = current track number
+*      MSBy R1 = new track number
+*     Numbers not adjusted for 80 tracks
+SEEK   DATA XSECWS,SEEK1
+SEEK1  SBO  0                 Turn the sucker on
+       CLR  R0                Clear LSBy
+       CLR  R1                  "    "
+       MOVB *R13,R0           Current track
+       MOVB @2(R13),R1        New track
+       BL   @DRV80
+       JEQ  SEEK2             40 track drive
+       CB   @TRACKS,@H50      80 track disk?
+       JEQ  SEEK2             Yes
+       SLA  R0,1              *2
+       SLA  R1,1              *2
+SEEK2  MOVB R1,@FDDATA        New track number
+       MOVB R0,@FDTRAK        Old track number
+       MOVB @H04,@WRTDEL      Write delay on
+       MOVB @FSEEK,R0         Seek command
+       SOCB @STPRAT,R0        Set step rate
+       MOVB R0,@FDCOM         Write command
+*  wait for busy to come on, then wait for it to go off
+SEEK3  MOVB @FDSTAT,R0
+       SRL  R0,9
+       JNC  SEEK3
+       SETO R2                XOR value to invert index or not
+SEEK4  CLR  R1                counter
+       INV  R2                Invert the sucker
+       LI   R3,2              counter
+SEEK5  MOVB @FDSTAT,R0
+       SRL  R0,9
+       JNC  SEEK6             It's no longer busy <yay!>
+       XOR  R2,R0             Invert or not
+       SRL  R0,1              Check index bit
+       JOC  SEEK4             It was on -- invert and reset couinter
+       DEC  R1                Counter = 0?
+       JNE  SEEK5             No -- keep trying
+       DEC  R3
+       JNE  SEEK5
+       B    @DSRERR           Error
+SEEK6  SBZ  0                 Turn it off
+       RTWP                   Return
+
+BUSY   DATA BUSYWS,BUSY1
+BUSYND DATA BUSYWS,BUSY4      Don't delay
+BUSYWS BSS  >0020
+BUSY1  LI   R0,80             \
+       DEC  R0                 | delay for 1770/1772 to set status bits
+       JNE  $-2               /
+BUSY4  CLR  R0
+       LI   R1,3
+BUSY2  MOVB @FDSTAT,R2
+       SRL  R2,9              Busy still on?
+       JNC  BUSY3             Far out, it's actually done
+       DEC  R0                Shall we even bother trying again?
+       JNE  BUSY2             Why not
+       DEC  R1                Give it 65,536 more chances?
+       JNE  BUSY2             I guess so
+       B    @DSRERR           It's had 131,072 chances. That's it!!
+BUSY3  RTWP                   Return
+
+* Select density subroutine
+*  in: R4 = 0, R5 = 3, R6 = >1D00 + FDDENS, R2 = >4000, R3 = 16
+SDDAT  LI   R0,RADBUF
+       LI   R1,6
+       MOVB @FRADD,@FDCOM     Read address
+SDDAT1 TB   FDDRQ             DRQ on?
+       JEQ  SDDAT5            Yes
+       DEC  R2                Timed out?
+       JNE  SDDAT1            No
+SDDAT2 MOVB @FSTOP,@FDCOM     Stop command
+       DEC  R3                Try another density change?
+       JNE  SDDAT3            Sure
+       MOV  *R11,R11          Get error address
+       RT                     Return to error routine
+SDDAT3 AI   R4,>0100          From SBO to SBZ
+       ANDI R4,>0100          Don't let it become TB
+       A    R4,R6             Base command (>1D00 + FDDENS)
+       X    R6
+       S    R4,R6             Change back
+       LI   R2,>8000          Time to try it
+      LI   R5,10
+      DEC  R5
+      JNE  $-2
+       JMP  SDDAT             Try again
+SDDAT4 TB   FDDRQ
+       JNE  SDDAT4
+SDDAT5 MOVB @FDDATA,*R0+
+       DEC  R1
+       JNE  SDDAT4
+       MOV  @RADBUF,R0        Get first word
+       JNE  SDDAT2            Not a >0000 - can't be right - try again
+       B    @2(R11)           Return
+SDLEN  EQU  $-SDDAT
+
+* Read address subroutine
+*  In: R0=Addr to store data, R1=Length
+*      DATA error address
+*  Reg: R0, R1
+RADAT  MOVB @FDSTAT,R4        Get status
+       SRL  R4,10             Get index bit
+       JOC  RADATX            Got it!
+       DEC  R6
+       JNE  RADAT
+       DEC  R7
+       JNE  RADAT
+       JMP  RADAT1            Error out
+RADATX MOVB R8,*R9            Write FDC Read Address command
+RADAT0 TB   FDDRQ
+       JEQ  RADAT3
+       DEC  R2
+       JNE  RADAT0
+       DEC  R3
+       JNE  RADAT0
+RADAT1 MOV  *R11,R11
+       RT
+RADAT2 TB   FDDRQ             Data Request?
+       JNE  RADAT2            No
+RADAT3 MOVB @FDDATA,*R0+      Get data
+       DEC  R1                Done?
+       JNE  RADAT2            No
+       CLR  R2
+*      LI   R3,10             Long delay
+       LI   R1,6              Six more bytes
+RADAT4 MOVB @FDSTAT,R4        Get status
+       SRL  R4,9              Get busy bit
+       JOC  RADAT4            Keep going
+*      ANDI R4,>E0            Record Not Found, CRC, or Lost Data Error
+*      JNE  RADAT1            One of those
+       DEC  R5                Any more sectors to get?
+       JNE  RADATX            Yes
+       B    @2(R11)           Return
+RALEN  EQU  $-RADAT           Length
+
+* Read subroutine
+*  In: R0=Addr to store data, R1=Length
+*      DATA error address
+*  Reg: R0, R1
+RSDAT  MOVB @FDSTAT,R5
+       SRL  R5,9
+       JOC  RSDAT
+       MOVB @FRSEC,@FDCOM     Write FDC Read Sector command
+RSDAT0 TB   FDDRQ
+       JEQ  RSDAT2
+       DEC  R2
+       JNE  RSDAT0
+       DEC  R3
+       JNE  RSDAT0
+       B    @DSRERR
+RSDAT1 TB   FDDRQ             Data request?
+       JNE  RSDAT1            No - see if interrupt
+RSDAT2 MOVB @FDDATA,*R0+      Get data
+       DEC  R1                Done?
+       JNE  RSDAT1            No
+       RT                     Return
+RSLEN  EQU  $-RSDAT           Length of above
+
+* Write subroutine
+*  In: R0=Addr of data, R1=Length
+*      DATA error address
+*  Reg: R0, R1
+WSDAT  MOVB @FDSTAT,R5
+       SRL  R5,9
+       JOC  WSDAT
+       MOVB @FWSEC,@FDCOM     Write FDC Write Sector command
+*
+       LI   R4,30
+WSDA00 DEC  R4
+       JNE  WSDA00
+*
+WSDAT0 TB   FDDRQ
+       JEQ  WSDAT3
+       DEC  R2
+       JNE  WSDAT0
+       DEC  R3
+       JNE  WSDAT0
+       B    @DSRERR
+
+WSDAT1 TB   FDDRQ             Data request?
+       JNE  WSDAT1            No - see if interrupt
+WSDAT3 MOVB *R0+,@FDDATA      Write data
+       DEC  R1                Done?
+       JNE  WSDAT1            No
+       RT                     Return
+WSLEN  EQU  $-WSDAT           Length of above
+
+MOVE   MOV  *R11+,R0          Get source
+MOVE1  MOV  *R11+,R1          Get destination
+MOVE2  MOV  *R11+,R2          Get length
+MOVER  MOVB *R0+,*R1+         Move byte
+       DEC  R2                Done?
+       JNE  MOVER             No
+       RT                     Return
+
+* Get density
+GETDEN DATA XSECWS,GDEN1
+GDEN1  SBO  0
+       BL   @MOVE
+       DATA SDDAT,DSKSUB,SDLEN
+*  in: R4 = 0, R5 = 3, R6 = >1D00 + FDDENS, R2 = >4000, R3 = 16
+       LI   R2,>8000
+       LI   R3,10
+       CLR  R4
+*      LI   R5,3
+       LI   R6,>1D00+FDDENS
+       BL   @DSKSUB           Read the stuff
+       DATA DSRERR            Error routine
+       SBZ  0                 We got our density set - turn card off ...
+       RTWP                   ... and return
+
+* Read address.
+RADDR  DATA XSECWS,RADDR1
+RADDR1 SBO  0
+       BL   @MOVE
+       DATA RADAT,DSKSUB,RALEN
+       LI   R0,RADBUF         Buffer
+       LI   R1,6              Six byte address field
+       CLR  R2
+       LI   R3,10
+       LI   R5,18             Max is 18 sec/trk
+       CLR  R6
+       MOV  R3,R7
+       MOVB @FRADD,R8
+       LI   R9,FDCOM
+       BL   @DSKSUB           Read the stuff
+       DATA DSRERR            Error routine
+       MOV  *R13,R0           Get buffer address
+       LI   R1,RADBUF+2       Pointer to first sector number
+       MOVB *R1,R2            Get first sec #
+       LI   R3,18             Maximum sectors per track
+RADDR2 MOVB *R1,R4            Copy sector number
+       AI   R1,6              Point to next sector number
+       MOVB R4,*R0            Write sector number
+       JLT  RADDR4            Illegal - read address got a bad one
+       INC  R0
+RADDR4 CB   *R1,R2            Back to where we started?
+       JEQ  RADDR3            Yup
+       DEC  R3                Any more possible?
+       JNE  RADDR2            Yup
+RADDR3 MOVB @HFF,*R0          Flag end
+       SBZ  0
+       RTWP                   And return
+RADBUF EQU  >7200
+
+* Read sector.
+*  In: R0 = sector number, R1 = buffer address
+RSEC   DATA XSECWS,RSECI1
+RSECI1 MOVB *R13,@FDSEC       Set sector number
+       MOV  @2(R13),R0        Get buffer address
+       LI   R1,256            256 byte sector
+       CLR  R2
+       LI   R3,6
+       BL   @DSKSUB           Read the sector
+       MOVB @FDSTAT,R0        Get status
+       ANDI R0,>1C00          Record Not Found, CRC, or Lost Data Error
+       JNE  DSKERR            One of those
+DSKOK  RTWP                   Return
+DSKERR B    @DSRERR
+
+* Write sector.
+*  In: R0 = sector number, R1 = buffer address
+WSEC   DATA XSECWS,WSECI1
+WSECI1 MOVB *R13,@FDSEC       Set sector number
+       MOV  @2(R13),R0        Get buffer address
+       LI   R1,256            256 byte sector
+       CLR  R2
+       LI   R3,6
+       BL   @DSKSUB           Write sector to disk
+       MOVB @FDSTAT,R0        Get status byte
+       ANDI R0,>5C00          RNF, CRC, Lost, or Write Protect
+       JNE  DSKERR            Error
+       RTWP
+
+       END

@@ -1,0 +1,29 @@
+*** INPUT/E ***
+*
+       BLWP @INPUT            Read a line from screen.
+                                In: R0 = VDP address
+                                    R1 = CPU address (length byte first)
+                                    R2 = maximum length
+                                    DATA validation pointer
+                                Whatever is currently in the CPU buffer
+                                  will be displayed on entry.
+                                If R2 = 1, then <ENTER> will not be
+                                  required.
+                                If <ESC>, F9, up arrow, or down arrow
+                                    is used, the key value used to abort
+                                    will be stored in the MSBy of the
+                                    calling R2. The EQ bit will be set.
+                                If validation pointer is >0000, key mode
+                                  5 will be used and no checking of
+                                  chatacters will be done.
+                                If validation pointer is not >0000, then
+                                  any key pressed will be checked to see
+                                  if it is in the list pointed to by the
+                                  validation pointer (the list is
+                                  terminated with >00). If the key is not
+                                  in the list, it is ignored.
+
+       DATA FCTNX             If >FFFF, then treats down arrow as <ENTER>
+                                key. If >0000, treats as any other abort
+                                key.
+

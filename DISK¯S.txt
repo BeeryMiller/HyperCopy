@@ -1,0 +1,948 @@
+*** DISK/S ***
+*
+* Great thanks must be given to J. Paul Charlton . . . his ideas
+* enabled me to cut DS/DD 80 track copy time from about 2:40 to under
+* two minutes, with a relative increase in all other times, as well
+* . . . . he's incredible
+*
+* Random notes:
+*  Local pages and execution pages must be one and same for exec. pages
+*  0, 1, and 2 (that is, they must be loaded with local pages 0, 1, and
+*  2, respectively). Otherwise, this program could concievably badly bomb.
+*
+* All calls assume >F000 is used as WS
+*
+       DEF  READ,WRITE,FORMAT
+       DEF  SECLI,SECLO,GPI,GPO
+       DEF  SETUP,WREG,RREG
+       DEF  BREAD,BWRITE,SECCAL,SADDR
+       DEF  SSEC,SNUM,SLEN,SDEV,NUMTRK
+       REF  INDRV,OUTDRV,MEMMAP,PAGES
+       REF  INMEM,SIDES,DENS,TRACKS
+       REF  ILACEI,SKEWI,VERIFY,SEC0
+       REF  ILACEO,SKEWO,SECTRK,SETI
+       REF  CURDRV,SVMEM,RSMEM,WTRK
+       REF  SEEK,SETR,SETW,RSEC
+       REF  WSEC,TRK00,TRAK
+       REF  RSETDS,STEP,RADDR,SELDRV
+       REF  GETDEN,ERROR,DCCTYP
+       REF  STEPB,INSI,INSO
+       REF  TRKDRV,MOVE1,MOVE
+       REF  MOVER,VERPAG,BUSYND
+*
+* Memory usage of pad RAM:
+*  >F000 - >F01F main workspace
+*  >F020 - >F03F disk access workspace
+*  >F040 - >F0F9 disk access routines - can be used outside of disk access
+*
+* Memory usage for disk data:
+*  Everything is read from track 0, side 0 in order of sectors 0 - end.
+*  Then track 0, side 1, then track 1, and so on.
+*  NOTE: local page 3 is used as a temporary buffer, primarily for write
+*  verification. Thus, the disk data is read starting in local page 4.
+*
+       DXOP SYS,0             System XOP
+*
+MAPPER EQU  >F110             9640 memory mapper start address
+LSTR15 EQU  >008F             9995 op-code for LST  R15
+*
+D1     DATA 1
+D3     DATA 3
+DSRXOP DATA 8
+D256   DATA 256
+H2000  DATA >2000
+RETRY  DATA >0000             retry counter
+SKEWX  DATA >0000             Skew
+INSKEW DATA >0000             Internal skew
+INSKWX DATA >0000             Temp internal skew
+MEMSID DATA >0000             Memory one track, both sides
+BUFTRK DATA >0000             Memory one track, one side
+NUMTRK DATA >0000             Number of tracks we can fit in memory
+SLEND  DATA >0000
+UTIL   DATA >0009             XOP library
+DOFORM DATA >0000             Actually do the format, or just set up
+FTABLN DATA >0000             Length of format table
+CPWRS1 DATA >0000
+CPWRS2 DATA >0000
+*
+* BYTE
+*  Constant
+H00    BYTE >00
+H01    BYTE >01
+H02    BYTE >02
+H03    BYTE >03
+H04    BYTE >04
+H05    BYTE >05
+H09    BYTE >09
+BREAD  BYTE >0A               BREAD opcode
+BWRITE BYTE >0B               BWRITE opcode
+H10    BYTE >10
+H12    BYTE >12
+H28    BYTE >28
+H50    BYTE >50
+H59    BYTE >59               'Y'
+HF7    BYTE >F7
+HFE    BYTE >FE
+HFF    BYTE >FF
+*  Variable
+FORYET BYTE >00
+SKEWIX BYTE >00
+SKEWOX BYTE >00
+SVPAG  BYTE >00
+*
+       EVEN
+*
+SECCAL BYTE >00,>00,>00
+SADDR  BYTE >00,>00,>00                      Address
+SSEC   DATA >0000,>0000,>0000                Sector number
+SNUM   DATA >0000                            Number of sectors to read
+       BYTE >00
+SLEN   BYTE >00                              Length of device name
+SDEV   BSS  40                               Device name
+*
+*  Format logical PAB
+FORPAB BYTE >0E
+       BSS  >0E
+FORLEN BYTE >00
+FORDEV BSS  40
+*
+SDRV   BYTE >02,>00,':',>00                  Drive letter to parse
+*
+RREG   BSS  2
+WREG   BSS  2
+SECLI  BSS  19
+SECLO  BSS  19
+SECLIS BSS  19                18 sec/trk+eof flag
+       EVEN
+*
+*
+SIDE0  SBZ  2                 Side 0, MYARC
+       SBZ  7                 Side 0, CorComp
+       SBZ  7                 Side 0, TI
+*
+SIDE1  SBO  2                 Side 1, MYARC
+       SBO  7                 Side 1, CorComp
+       SBO  7                 Side 1, TI
+*
+DENS0  SBO  3                 Single density, MYARC
+       SBO  10                Single density, CorComp
+       NOP                    TI has no density
+*
+DENS1  SBZ  3                 Double density, MYARC
+       SBZ  10                Double density, CorComp
+       NOP                    TI has no density
+*
+FDTRAD DATA >DF03             Track write address, MYARC
+       DATA >DFFA             Track write address, CorComp
+       DATA >DFFA             Track write address, TI
+*
+SETUP  LI   R1,DCCTYP
+       MOV  @SIDE0(R1),@SIDE0
+       MOV  @SIDE1(R1),@SIDE1
+       MOV  @DENS0(R1),@DENS0
+       MOV  @DENS1(R1),@DENS1
+       MOV  @FDTRAD(R1),@FDTRAD
+       RT
+*
+* BL   @GPI or GPO   for input and output
+*  get skew and interlace
+*  Reg: R0, R1, R2, R10, R12, R15
+GPLI   DATA SECLI,ILACEI,SKEWI
+GPLO   DATA SECLO,ILACEO,SKEWO
+GPI    LI   R2,GPLI
+       MOVB @INDRV,@CURDRV
+       JMP  GETPAR
+GPO    LI   R2,GPLO
+       MOVB @OUTDRV,@CURDRV
+GETPAR MOV  R11,R10           Save return address
+       STST R15               Save status register
+       LIMI 0
+       MOVB @INDRV,R1
+       CB   R1,@H04           Physical or logical device?
+       JH   GP03              Logical device - leave skew & interlace at 0
+       LIMI 0
+       BLWP @SVMEM            Save memory
+       BL   @RSETDS           Reset disk controller
+       SRL  R1,8
+       BL   @SELDRV           Select disk drive
+       BLWP @TRK00            Restore to track 0, side 0
+       LI   R0,>4000          Delay... dunno why, but otherwie, GETDEN
+GP01C  SWPB R1                         doesn't work.
+       SWPB R1
+       DEC  R0
+       JNE  GP01C
+       BLWP @GETDEN           Select correct density
+       LI   R0,>4000          Delay... dunno why, but otherwie, RADDR
+GP01B  SWPB R1                         doesn't work.
+       SWPB R1
+       DEC  R0
+       JNE  GP01B
+       BLWP @TRK00            This needed for RADDR to find index hole
+       MOV  *R2,R0            Get address to store list
+       BLWP @RADDR            Read addresses
+GP01   CB   *R0+,@H01         Sector 1?
+       JNE  GP01              No
+       S    *R2+,R0           Minus buffer offset ...
+       DEC  R0                ... and 1 for auto-increment
+       SWPB R0                To MSBy
+       MOV  *R2+,R1           Get address to store interlace
+       MOVB R0,*R1
+*    if input disk, then read sector 0
+       LI   R12,>1100
+       SBO  0
+       CI   R2,GPLO           On output disk list?
+       JHE  GP01A             Yes (a cheap method, but it does work)
+       BLWP @SETR             Set up for read sector
+       CLR  R0                Read sector 0
+       LI   R1,SEC0
+       BLWP @RSEC
+       BL   @FIXSC0           Fix sector 0
+       BLWP @BUSYND
+*    read skew
+GP01A  BLWP @STEP             To track 1
+       SBZ  0                 Turn the card off
+       LI   R0,>6000          Execution page 3 start
+       BLWP @RADDR            Read addresses
+GP02   MOVB *R0+,R1           Get sector number
+       JNE  GP02              Not 0
+       AI   R0,->6001         Minus buffer offset & 1 for auto-inc
+       SWPB R0                To MSBy
+       MOV  *R2,R1            Get address to store skew
+       MOVB R0,*R1
+       BLWP @TRK00            Step to track 0
+       BLWP @RSMEM
+       JMP  GP04              Check memory requirements and return
+*
+*   Logical device. Read sector 0 if input drive
+GP03   CI   R2,GPLI           Input list?
+       JNE  GP04
+*   parse filename
+       LI   R0,8              Parse filename opcode
+       LI   R1,SDRV+1
+       LI   R2,SLEN
+       CLR  R3
+       MOVB @INDRV,*R1        Input drive letter
+       MOVB @H28,*R2          Maximum length
+       SYS  @UTIL             Utility library
+       LI   R0,SECCAL
+       MOVB @BREAD,*R0
+       CLR  @SSEC             Sector number
+       MOVB @H00,@SADDR       MSBy of address
+       LI   R1,SEC0           Local page better correspond to exec. page
+       MOV  R1,@SADDR+1
+       MOV  @D1,@SNUM         Read one sector
+       SYS  @DSRXOP           Call DSR routine
+       MOVB @SECCAL+2,R0      Get error code
+       JEQ  GP03A             No error
+       LI   R0,2              Call it a hardware error
+       B    @ERROR
+GP03A  BL   @FIXSC0           Fix sector 0
+GP04   DATA LSTR15            Restore interrupt mask
+*   get memory for one track, both sides
+       CLR  R2                Clear LSBy
+       MOVB @SECTRK,R2        Get sectors/track
+       MOVB @SIDES,R0         Get sides (>01 or >02)
+       SRL  R0,8              To LSBy
+       SLA  R2,R0             Shift
+       SRL  R2,1              Correct
+       MOV  R2,@MEMSID
+       LI   R0,>2000
+       MOV  @PAGES,R1         Get number of pages
+       DEC  R1                Since first page is for temp. use
+       MPY  R1,R0             R0:R1 hold total memory available
+       DIV  R2,R0
+       MOV  R0,@NUMTRK        Number of tracks we can store in memory
+       B    *R10              Return
+*
+* Fix sector 0
+*  Many old DMs did not fully initialize sector 0
+*  This subroutine will change any garbage to the probable correct values
+FIXSC0 CB   @TRACKS,@H50      80 tracks?
+       JEQ  FIXS1             Yes
+       MOVB @H28,@TRACKS      Then must be 40 tracks
+FIXS1  CB   @DENS,@H02        Double density?
+       JEQ  FIXS2             Yes
+       MOVB @H01,@DENS        Then must be single
+FIXS2  CB   @SIDES,@H02       Double sided?
+       JEQ  FIXS3             Yes
+       MOVB @H01,@SIDES       Then must be single
+FIXS3  CB   @SECTRK,@H12      18 sec/trk?
+       JEQ  FIXS4             Yes
+       CB   @SECTRK,@H10      16 sec/trk?
+       JEQ  FIXS4             Yes
+       MOVB @H09,@SECTRK      Then must be 9 sec/trk
+FIXS4  RT                     Return
+*
+*
+*
+READ   LIMI 0                 Turn interrupts off
+       MOV  R11,@READRT+2     Save return address
+       BLWP @SVMEM            Save memory
+       MOV  @RREG,R0          Get starting track number
+       JNE  READ2             Not 0
+       MOVB @SKEWI,@SKEWIX
+*   adjust skew to compensate for track-to-track delay time
+       MOVB @H02,@INSKEW+1    For Single Density disks
+       CB   @DENS,@H01        Single density?
+       JEQ  READ1             Yes
+       AB   @H01,@INSKEW+1    Adjust it, then
+*   get sector list buffer memory for one track, one side
+READ1  MOVB @SECTRK,R0        Get sectors/track
+       SRL  R0,8              To LSBy
+       MOV  R0,@BUFTRK
+*   get pointer to end of sector list buffer
+       AI   R0,SECLIS
+       MOV  R0,@SLEND
+*   Read disk
+READ2  CB   @INDRV,@H04
+       JH   READ3             Logical device
+       MOVB @INDRV,@CURDRV
+       BL   @RDP              ReaD, Physical device
+       JMP  READ4
+READ3  BL   @RDL              ReaD, Logical device
+READ4  BLWP @RSMEM            Restore memory
+READRT B    @0                Return to caller
+*
+WRITE  LIMI 0
+       MOV  R11,@WRITRT+2     Save return addres
+       BLWP @SVMEM            Save memory
+       MOVB @SKEWO,@SKEWOX    Temp skew
+       MOVB @WREG,R0          Starting at track 0?
+       JNE  WRITE2
+       CLR  @DOFORM
+       BL   @FORMXX           Yes... set up for format
+       LI   R5,SECLIS
+       MOV  R5,@CPWRS1        save
+       MOV  R5,@CPWRS2         "
+       JMP  WRITE3
+WRITE2 CB   @INDRV,@OUTDRV    Equal?
+       JNE  WRITE3            No
+*   Single drive system... step drive if physical
+       CB   @OUTDRV,@H04
+       JH   WRITE3
+       MOVB @TRAK,R0
+       MOVB @WREG,R1
+       BLWP @SEEK
+WRITE3 CB   @OUTDRV,@H04
+       JH   WRITE4            Logical device
+       MOVB @OUTDRV,@CURDRV
+       BL   @WRP              WRite, Physical device
+       JMP  WRITE5
+WRITE4 BL   @WRL              WRite, Logical device
+WRITE5 BLWP @RSMEM
+WRITRT B    @0
+*
+*
+* ReaD Physical device
+RDP    MOV  R11,@COPYRT+2     Save return address
+       MOVB @INDRV,R1
+       SRL  R1,8
+       BL   @SELDRV
+       LI   R14,RREG
+       LI   R15,RSEC
+       LI   R6,SECLI          Temporary location
+       MOVB @SKEWIX,@SKEWX+1
+       MOV  @INSKEW,@INSKWX
+       BLWP @SETR
+       LI   R5,SECLIS         side 0 pointer
+       MOV  R5,R2             side 1 pointer
+       JMP  XDP
+* WRite Physical device
+WRP    MOV  R11,@COPYRT+2     Save return address
+       MOVB @OUTDRV,R1
+       SRL  R1,8
+       BL   @SELDRV
+       LI   R14,WREG
+       LI   R15,WSEC
+       LI   R6,SECLO          Temporary location
+       MOVB @SKEWOX,@SKEWX+1
+       CLR  @INSKWX
+       BLWP @SETW
+       BLWP @SETI
+       MOV  @CPWRS1,R5        side 0 pointer
+       MOV  @CPWRS2,R2        side 1 pointer
+* R2  = pointer into sector list (side 1)
+* R5  = pointer into sector list (side 0)
+* R6  = >0000 if working on side 0, >FFFF if side 1
+* R7  = current track number (byte)
+* R8  = pointer into buffer
+* R9  = pointer into memory page list
+* R10 = number of pages
+* R11 = used a whole lot
+* R12 = CRU base (>1100)
+* R13 = temporarily holds contents of R2 or R5
+* R14 = address of registers buffer
+* R15 = address for read or write
+XDP    MOV  @NUMTRK,R10       Number of tracks that'll hold in memory
+       MOVB @H00,@INMEM       Assume we didn't get the entire disk
+       LI   R12,>1100         CRU base of DCC
+       SBO  0                 Turn it on
+       MOV  *R14,R7           Track number
+       MOVB R7,@TRAK          Set track byte for future reference
+       MOV  @FDTRAD,R0        Get address of FDC track
+       MOVB R7,R8
+       LI   R9,DCCTYP
+       CI   R9,4              TI????
+       JNE  XDP1
+       INV  R8
+XDP1   MOVB R8,*R0            Set that, too
+       LI   R8,>8000          Buffer pointer
+       LI   R9,MEMMAP         Memory page list
+       INC  R9
+*   copy sector list
+       MOV  R6,R0             Source
+       MOV  R2,R6             save r2 (don't want it killed)
+       BL   @MOVE1
+       DATA SECLIS,19
+       MOV  R6,R2             restore r2
+       MOVB *R9,@MAPPER+4
+       MOVB @1(R9),@MAPPER+5
+RDP1   X    @SIDE0            Select side 0
+       CLR  R6                Side 0
+       MOV  R5,R13            Pointer for side 0
+*  decide if we should prepare format table or not
+       CI   R14,RREG          Reading?
+       JEQ  RDP3              Nope
+       LI   R0,FSECP          Pointer list
+WDP2   MOV  *R0+,R1           Get address
+       JEQ  WDP4              Done
+       MOVB R7,@->2000(R1)
+       MOVB R7,*R1+           Track number
+       MOVB @H01,@->2000(R1)  Side 1
+       MOVB @H00,*R1+         Side 0
+       MOVB *R2+,@->2000(R1)  Sector, side 1
+       MOVB *R5+,*R1          Sector, side 0
+       C    R2,@SLEND         At end?
+       JL   WDP3              Nope
+       LI   R2,SECLIS         Wrap to start
+WDP3   C    R5,@SLEND         At end?
+       JL   WDP2              Nope
+       LI   R5,SECLIS         Wrap to start
+       JMP  WDP2              Do next one
+WDP4   MOVB R7,R1             Track number
+       SRL  R1,8
+       MOVB @FMSG(R1),R1      Get message byte
+       SB   R7,R1
+       INV  R1
+       MOV  @FMSGP,R0
+       MOVB R1,*R0
+       LI   R0,>6000          Format table, side 0
+       BLWP @BUSYND           Wait for step to finish
+       JMP  RDP2A             Format that sucker
+* If writing, format track
+RDP2   CI   R14,RREG          Reading?
+       JEQ  RDP3              Yes
+RDP2A  MOV  @FTABLN,R1        Get length
+       BLWP @WTRK             Write track
+       MOV  @D3,@RETRY        set retry counter in case of verify
+*
+RDP3   BL   @RALLSC           Read/Write all sectors on that track
+*
+       CI   R14,RREG          Are we reading or writing?
+       JEQ  RDP4A             Reading
+       CB   @VERIFY,@H59      Get verify flag
+       JNE  RDP4A             Don't bother verifying
+*   Verify what we just wrote
+       MOVB @MAPPER+2,@SVPAG  Save
+       MOVB @VERPAG,@MAPPER+2
+       BLWP @SETR
+       LI   R15,RSEC          Read sector
+       MOV  R8,R3             Save buffer address
+       LI   R8,>4000          Address for our temp buffer
+       INC  R13               For time delay at BLWP @SETR command
+       BL   @ADJSKW
+       BL   @RALLSC           Read all sectors
+       DEC  R13               Correct for INC R13
+       BL   @ADJSKW
+       BLWP @SETW
+       LI   R15,WSEC          Write sector
+       MOV  R8,R0             Start buffer for read
+       MOV  R3,R8             Restore our old buffer address
+       CLR  R1                Clear LSBy
+       MOVB @SECTRK,R1        Get length to compare
+RDP4   C    *R0+,*R3+         Equal?
+       JNE  RDP4B             No - write entire track again
+       DECT R1                Minus 2
+       JNE  RDP4              Keep checking
+       JMP  RDP4C
+RDP4B  MOVB @SVPAG,@MAPPER+2
+       DEC  @RETRY            Bother trying again?
+       JNE  RDP4D             Sure, why not
+       LI   R0,2              Hardware error
+       B    @ERROR
+RDP4D  LI   R0,>6000          Assume side 0
+       ABS  R6                which side?
+       JEQ  RDP2              Yup, it's side 0
+       LI   R0,>4000
+       JMP  RDP2
+*
+* Verify checked out perfectly.
+RDP4C  MOVB @SVPAG,@MAPPER+2
+*   Done verifying (that, or we never did any verify at all)
+RDP4A  AB   @SECTRK,R8        Increment sector buffer
+       CB   @SIDES,@H02       Really double sided?
+       JNE  RDP8              Nope
+       ABS  R6                Side 0 or 1?
+       JNE  RDP7              Just did side 1 - don't worry about it
+*  just did side 0 -- now do side 1
+       MOV  R2,R13            side 1 pointer
+       SETO R6                Side 1
+       LI   R0,>4000          Format table for side 1 (in case we're
+       BLWP @BUSYND                                    writing)
+       X    @SIDE1            Select side 1
+       JMP  RDP2
+* just did side 1
+RDP7   A    @SKEWX,R13        Add skew for next track, side 1
+       A    @INSKWX,R13       Add internal skew
+       BL   @ADJSKW
+       MOV  R13,R2            Save
+       MOV  R5,R13            Side 0 pointer
+* done with this track - prepare for next one
+RDP8   AB   @H01,R7           Track number
+       BLWP @BUSYND
+       CB   R7,@TRACKS        At end?
+       JEQ  RDP9C             Yes
+       LI   R0,400            \
+       DEC  R0                 | for the 1770
+       JNE  $-2               /
+       BLWP @STEPB            Step the drive, don't check for busy
+       S    @SKEWX,R13        Subtract skew
+       A    @INSKWX,R13       Add internal skew
+       BL   @ADJSKW
+       MOV  R13,R5            Save side 0 pointer
+       DEC  R10               Can any more fit in memory?
+       JEQ  RDP9B             No...
+       CI   R8,>A000          Into second page of buffer?
+       JL   RDP9A             No... go to B @RDP1 instruction
+       INC  R9                Next page in memory
+       AI   R8,->2000
+       CI   R8,>A000
+       JL   RDP9
+       INC  R9
+       AI   R8,->2000
+RDP9   MOVB *R9,@MAPPER+4
+       MOVB @1(R9),@MAPPER+5
+RDP9A  B    @RDP1             Carry on...
+* we've reached the end of the disk . . . intense . . .
+RDP9C  MOVB *R14,R0           Was the starting track equal to >00?
+       JNE  RDP9B             No
+       MOVB @HFF,@INMEM       In that case, we got entire disk at once
+* store useful parameters
+RDP9B  MOV  R7,*R14
+       BLWP @BUSYND
+       SBZ  0                 Turn DCC off
+       CI   R14,RREG          are we reading or writing?
+       JEQ  COPYRT            reading -- do _not_ save rest of pointers
+       MOV  R5,@CPWRS1        save
+       MOV  R2,@CPWRS2        save
+COPYRT B    @0                Return
+* Read all sectors
+RALLSC MOVB @SECTRK,R4
+       SRL  R4,8              to LSBy
+       CLR  R1                Clear LSBy
+RALL1  MOVB *R13+,R1          Get sector number
+       JGT  RALL2             Legal sector number
+       JEQ  RALL2             Legal, also
+       LI   R13,SECLIS        Start of list
+       MOVB *R13+,R1          Get a _real_ sector number
+RALL2  MOVB R1,R0             Copy to R0
+       AB   R8,R1             Buffer start address
+       BLWP *R15
+       DEC  R4                Any more sectors to read?
+       JNE  RALL1             Yah
+RALLR  RT                     Return
+*
+* Adjust R13 pointer to fit in range of SECLIS
+ADJSKW CI   R13,SECLIS        At or past beginning?
+       JHE  ADJSK1            Yes
+       A    @BUFTRK,R13       No - bring it up
+       JMP  ADJSKW            Return
+ADJSK1 C    R13,@SLEND        At or past end?
+       JL   ADJSK2            No
+       S    @BUFTRK,R13       Yes - bring it down
+       JMP  ADJSK1
+ADJSK2 RT                     Return
+*
+*
+* ReaD Logical device
+RDL    MOVB @INDRV,@SDRV+1    Set device
+       LI   R14,RREG          Read register buffer
+       MOVB @BREAD,@SECCAL    Set sector I/O as read
+       JMP  XDL
+* WRite Logical device
+WRL    MOVB @OUTDRV,@SDRV+1   Set device
+       LI   R14,WREG
+       MOVB @BWRITE,@SECCAL   Set sector I/O as write
+* R6  = >0000 if working on side 0, >FFFF if side 1
+* R7  = current track number (byte)
+* R8  = Mid and Low byte of buffer
+* R9  = MSBy of buffer
+* R11 = used a whole lot
+* R12 = CRU base (>1100)
+* R13 = saved return address
+* R14 = address of registers buffer
+XDL    MOV  R11,R13           Save return address
+       MOVB @H00,@INMEM       Assume we didn't get the entire disk
+       MOV  *R14,R7           Track number
+       LI   R8,>8000          MIDby and LSBy of buffer pointer
+       CLR  R9                MSBy of buffer pointer
+*  parse the device name
+       LI   R0,8              Parse filename opcode
+       LI   R1,SDRV+1
+       LI   R2,SLEN
+       CLR  R3
+       MOVB @H28,*R2          Maximum length
+       SYS  @UTIL             Utility library
+       MOV  @NUMTRK,R10       Get number of tracks memory can store
+*
+RDL1   CLR  R6                Side 0
+*
+       CLR  R2                Clear LSBy
+       MOV  @MEMSID,R2        Get memory per "track/side"
+       MOV  R9,R3             MSBy of buffer pointer
+       A    R8,R2             Get address where buffer will end with this
+*                                 track
+       JNC  RDL2              Didn't roll over
+       INC  R3
+* Read/write all sectors on this "track"
+RDL2   MOVB @SECTRK,R4
+       SRL  R4,8              to LSBy
+       MOV  R4,@SNUM          Number of sectors to access
+       MOVB R7,R0             Get track number
+       SRL  R0,8              To LSBy
+*   adjust track from 0-39 to 79-40 if on side 1
+       ABS  R6                Which side are we on?
+       JEQ  RDL3              Side 0
+       AI   R0,-79
+       ABS  R0                That did it
+RDL3   MPY  R4,R0             Get starting sector number
+       MOV  R1,@SSEC          Start sector number
+       SWPB R9                MSBy of buffer address
+       MOVB R9,@SADDR
+       SWPB R9                Back to LSBy
+       MOV  R8,@SADDR+1       Write rest of buffer address
+       LI   R0,SECCAL         Sector I/O
+       SYS  @DSRXOP           Call DSR routine
+       AB   @SECTRK,R8        Increment sector buffer
+       JNC  RDL5
+       INC  R9
+RDL5   CB   @SIDES,@H02       Really double sided?
+       JNE  RDL7              Nope
+       ABS  R6                Side 0 or 1?
+       JNE  RDL7              Just did side 1 - don't worry about it
+       SETO R6                Side 1
+       JMP  RDL2              Continue on that side
+*  read/wrote both sides
+RDL7   AB   @H01,R7           Track number
+       CB   R7,@TRACKS        At end?
+       JEQ  RDL7A             No way
+       DEC  R10               Any more room in memory?
+       JEQ  RDL8              Nope
+       JMP  RDL1              Keep going
+* we've reached the end of the disk . . . intense . . .
+RDL7A  MOVB *R14,R0           Was the starting "track" equal to 0?
+       JNE  RDL8              No
+       MOVB @HFF,@INMEM       In that case, we got entire disk at once
+* store useful parameters
+RDL8   MOV  R7,*R14
+       B    *R13              Return
+*
+* BL   @FORMAT   In:  OUTDRV = drive to format (byte)
+*                     SIDES  = sides - 1 or 2 (byte)
+*                     DENS   = density - 1 or 2 (byte)
+*                     TRACKS = tracks - 40 or 80 (byte)
+*                     ILACEO = interlace (byte) - ignored if logical drive
+*                     SKEWO  = skew (byte) - ignored if logical drive
+*                     SECTRK = sectors per track
+*                Assumes execution page 3 is free for useage.
+FTAB   DATA >0900,FTAB9,>6020
+       DATA >1000,FTAB16,>6040
+       DATA >1200,FTAB18,>6040
+       DATA >0000
+FTAB9  BYTE >10,>00,>06,>00,>00,>FF,>0B,>FF
+       BYTE >06,>00,>01,>FB,>80,>E5,>80,>E5
+       BYTE >01,>F7,>1B,>FF,>00,>00
+FTAB16 BYTE >18,>4E,>0D,>00,>03,>F5,>00,>FF
+       BYTE >16,>4E,>0C,>00,>03,>F5,>01,>FB
+       BYTE >80,>E5,>80,>E5,>01,>F7,>18,>4E
+       BYTE >00,>00
+FTAB18 BYTE >18,>4E,>0D,>00,>03,>F5,>00,>FF
+       BYTE >16,>4E,>0C,>00,>03,>F5,>01,>FB
+       BYTE >80,>E5,>80,>E5,>01,>F7,>18,>4E
+       BYTE >00,>00
+*
+* following is encoded text that says "Many thanks to PaulC. None to JR."
+* JR is Jack Riley, vice-president of MYARC and my arch-enemy.
+* It is written out one byte per track in the first gap
+FMSG   BYTE 178,159,147,137,227
+       BYTE 144,157,165,153,157
+       BYTE 150,234,151,157,237
+       BYTE 190,174,155,165,207
+       BYTE 229,244,199,167,169
+       BYTE 179,249,166,172,252
+       BYTE 211,204,241
+*
+FSECP  BSS  19*2              Store pointers in format table to
+*                                   track-side-sector number field
+FMSGP  DATA >0000             Pointer to message byte
+*
+FORMAT BLWP @SVMEM
+       SETO @DOFORM           Actually do the format
+FORMXX MOV  R11,@FORMR+2
+       CB   @OUTDRV,@H04      Physical or logical device?
+       JLE  FT01A             Physical
+       B    @FT30             Format logical, then
+FT01A  LIMI 0
+       BLWP @SETI
+       MOVB @OUTDRV,@CURDRV
+       LI   R0,SECLO          Sector list, output disk
+       MOVB @SECTRK,R1        Sec/trk
+       SRL  R1,8              To LSBy
+       MOV  R1,@BUFTRK        will be useful later
+       MOV  R1,R2             Save
+       MOV  R1,R4             Save
+       MOVB @ILACEO,R3        Get interlace
+       SRL  R3,8              To LSBy
+FT01   MOVB @HFF,*R0+         Write an >FF
+       DEC  R1                Done?
+       JNE  FT01              No
+       CLR  R0                Sector number
+FT02   CB   @SECLO(R1),@HFF   This entry occupied?
+       JEQ  FT03              Nope
+       INC  R1                Next position
+       JMP  FT04              Range check
+FT03   MOVB R0,@SECLO(R1)     Write sector number
+       AB   @H01,R0           Next sector
+       A    R3,R1             Add interlace
+       DEC  R4                Done?
+       JEQ  FT05              Yes
+*   range check
+FT04   C    R1,R2             Past end?
+       JL   FT02              No - keep going
+       S    R2,R1             Back up, then
+       JMP  FT02              Keep going
+FT05   MOVB @HFF,@SECLO(R2)   Write the trailing >FF
+       AI   R2,SECLIS
+       MOV  R2,@SLEND
+       BL   @MOVE
+       DATA SECLO,SECLIS,19
+       MOVB @OUTDRV,R1
+       SRL  R1,8
+       BL   @SELDRV
+       BLWP @TRK00
+       LI   R12,>1100
+       SBO  0                 Turn on disk controller card
+* find format table to use
+* also, select correct density
+       LI   R0,FTAB
+       CB   @DENS,@H02
+       JEQ  FT05A             Double density
+       X    @DENS0            Single density
+       JMP  FT06
+FT05A  X    @DENS1            Double density
+FT06   MOV  *R0+,R1
+       JNE  FT07              not 0
+       LI   R0,3              Illegal parameters error
+       B    @ERROR            Error - can't format other than 9,16,18
+FT07   CB   R1,@SECTRK        equal?
+       JEQ  FT08              yup
+       C    *R0+,*R0+
+       JMP  FT06
+FT08   MOV  *R0+,R1           Get address of format table
+       MOV  *R0,@FMSGP        Pointer for message byte
+       MOV  R1,R0             Save
+       LI   R4,>6000          Buffer to use
+       MOVB @SECTRK,R5
+       SRL  R5,8              To LSBy
+       LI   R6,FSECP
+FT09   MOVB *R1+,R2           Get count
+       JEQ  FT11              0 - special flag
+       MOVB *R1+,R3           Get value to write
+       SRL  R2,8
+FT10   MOVB R3,*R4+           Write
+       DEC  R2
+       JNE  FT10
+       JMP  FT09
+FT11   MOVB *R1+,R2           Get next byte
+       JEQ  FT12              End of sector
+       MOVB @HFE,*R4+         ID address mark
+       MOV  R4,*R6+           Save pointer to track,side,sector
+       AI   R4,3              Past all this stuff
+       MOVB @H01,*R4+         Sector length
+       MOVB @HF7,*R4+         CRC flag
+       JMP  FT09              Continue
+FT12   MOV  R0,R1             Address
+       INCT R1                Past preliminary
+       DEC  R5
+       JNE  FT09
+       CLR  *R6               Clear end of FSECP
+*      LI   R2,4
+*FT12B  MOVB @H00,*R4+
+*      DEC  R2
+*      JNE  FT12B
+*      MOV  R4,@FMSGP
+*      INC  R4
+*      MOVB @H00,*R4+
+*      MOVB @H00,*R4+
+*  copy format table to >4000 for side 1
+       LI   R1,MEMMAP
+       MOVB @-1(R1),@MAPPER+2 Load memory page
+*  format table built. now, go format every track
+*  drive already at side 0, track 0
+       AI   R4,->6000         Get length of format table
+       LI   R0,>6000          Start of format table
+       LI   R1,>4000
+       MOV  R4,R2
+       BL   @MOVER
+       ABS  @DOFORM           Should we actually do this?
+       JNE  FT12A             Yes
+       MOV  R4,@FTABLN        Format table length
+       B    @FORMR            Return to caller
+FT12A  MOV  R4,R1             Put length in R1
+       CLR  R2                Track number
+       LI   R9,FMSG           Start of format message
+       CLR  R3                Side 0 (>0100 indicates side 1)
+       LI   R4,SECLIS         Sector list, output disk (side 0)
+       MOV  R4,R8             Sector list, output disk (side 1)
+       MOVB @SKEWO,R7
+       SRL  R7,8
+FT13   LI   R5,FSECP          Pointer to ID fields
+FT14   MOV  *R5+,R6           Get address
+       JEQ  FT15              Done
+       MOVB R2,@->2000(R6)
+       MOVB R2,*R6+           Track number
+       MOVB @H01,@->2000(R6)  Side 1
+       MOVB @H00,*R6+         Side 0
+       MOVB *R8+,@->2000(R6)  Sector, side 1
+       MOVB *R4+,*R6          Sector, side 0
+       C    R4,@SLEND         At end?
+       JL   FT14A             Nope
+       LI   R4,SECLIS         Wrap to start
+FT14A  C    R8,@SLEND         At end?
+       JL   FT14              Nope
+       LI   R8,SECLIS         Wrap to start
+       JMP  FT14              Do next one
+FT15   MOVB *R9+,R6           Get byte
+       SB   R2,R6             Subtract track number
+       INV  R6                Invert
+       MOV  @FMSGP,R5         Pointer to message byte
+       MOVB R6,*R5
+       X    @SIDE0
+*LI R0,500
+*DEC R0
+*JNE $-2
+       LI   R0,>6000
+       BLWP @WTRK             Write track
+       CB   @SIDES,@H02
+       JNE  FT18
+       X    @SIDE1
+*LI R0,500
+*DEC R0
+*JNE $-2
+       LI   R0,>4000
+       BLWP @WTRK
+* just did side 1 - step and do side 0
+       A    R7,R8             Add skew
+       MOV  R8,R13
+       BL   @ADJSKW           Make sure in range
+       MOV  R13,R8            Save side 1 pointer
+* Fix for skew before next track
+FT18   S    R7,R4             Subtract skew
+       MOV  R4,R13
+       BL   @ADJSKW           Make sure in range
+       MOV  R13,R4            Save side 0 pointer
+       AB   @H01,R2           Track number
+       CB   R2,@TRACKS        At end?
+       JEQ  FT21              Yes
+       LI   R0,400            \
+       DEC  R0                 | for the 1770
+       JNE  $-2               /
+       BLWP @STEP
+       JMP  FT13
+*
+* all done formatting the disk!!! yay!
+FT21   BL   @FTDEL
+       BLWP @TRK00            Restore to track 0
+       BL   @FTDEL
+* write sectors 0 and 1 to disk
+       BLWP @SETW
+       SBO  0                 Turn it on
+       CLR  R0                Sector 0
+       LI   R1,SEC0           Sector 0 buffer
+       BLWP @WSEC
+       LI   R1,>6000          Good buffer to use for building of sector 1
+FT22   CLR  *R1+
+       CI   R1,>6100
+       JNE  FT22
+       LI   R0,>0100          Sector 1
+       LI   R1,>6000          Sector 1 buffer
+       BLWP @WSEC             Write that out, too
+       BLWP @RSMEM            Restore memory
+       BLWP @BUSYND           Wait until done
+       SBZ  0                 Turn off disk controller card
+       B    @FORMR            Return
+*
+*  Format a logical device
+*   Parse the device name, first
+FT30   LI   R0,8              Parse filename opcode
+       LI   R1,SDRV+1
+       LI   R2,FORLEN
+       CLR  R3
+       MOVB @OUTDRV,*R1
+       MOVB @H28,*R2          Maximum length
+       SYS  @UTIL             Utility library
+*   set up info
+       MOVB @TRACKS,@FORPAB+3 # tracks
+       MOVB @SIDES,@FORPAB+7  Sides
+       MOVB @DENS,@FORPAB+6   Density
+       CLR  @FORPAB+4         Skew & interlace
+*   execute
+       LI   R0,FORPAB         Format PAB
+       SYS  @DSRXOP           Execute that mother
+       MOVB @FORPAB+2,R0      Get error code
+       SRL  R0,13
+       JEQ  FT32              Nil -- write sectors 0 and 1
+*  damn . . . an error
+FT30A  CI   R0,1              Write protect?
+       JEQ  FT31              Yes
+       LI   R0,2              Call it a hardware error, then
+FT31   B    @ERROR            Go to it
+*
+FT32   MOVB @BWRITE,@SECCAL   Write opcode
+       BL   @MOVE             Move device name
+       DATA FORLEN,SLEN,41
+       LI   R0,1              One sector
+       MOV  R0,@SNUM
+       CLR  @SSEC
+       MOVB @H00,@SADDR       MSBy of address
+       LI   R0,SEC0
+       MOV  R0,@SADDR+1       Middle byte and LSBy of address
+       LI   R0,SECCAL
+       SYS  @DSRXOP
+       MOVB @SECCAL+2,R0      Get error code
+       SRL  R0,13             Mask out worthless b.s.
+       JNE  FT30A             Error condition
+       LI   R0,1              Write sector 1
+       MOV  R0,@SNUM
+       MOV  R0,@SSEC
+       LI   R0,>6000
+       MOV  R0,@SADDR+1
+FT33   CLR  *R0+
+       CI   R0,>6100
+       JNE  FT33
+       LI   R0,SECCAL
+       SYS  @DSRXOP
+       MOVB @SECCAL+2,R0
+       SRL  R0,13
+       JNE  FT30A
+*
+FORMR  B    @0                Return to caller
+*
+FTDEL  CLR  R0
+FTDEL1 SWPB R0
+       SWPB R0
+       DEC  R0
+       JNE  FTDEL1
+       RT
+*
+       END

@@ -1,0 +1,1162 @@
+*** MENU/S ***
+*
+* menu for HyperCopy
+* written by Mike Dodd
+*
+       DEF  MENU,START
+       DEF  MEMMAP,PAGES
+       DEF  INMEM,SIDES,DENS,SECTRK
+       DEF  TRACKS,ILACEI,ILACEO,SKEWI
+       DEF  SKEWO,SEC0,CURDRV
+       DEF  ERROR,LSTDRV
+       DEF  INSI,INSO,VERPAG
+       DEF  VMBW,VSBW,CLS,TEMP
+       DEF  VALSD,VALNUM,VALYN
+       DEF  ASCBIN,BINASC,SCRGEN
+*
+       REF  READ,WRITE,FORMAT,GPI
+       REF  GPO,TRKDRV,RSETDS
+       REF  MOVE,MOVE1,MOVE2,MOVER
+       REF  GETDEN,TRK00,SETUP
+       REF  RSMEM,SVMEM,INPUT
+       REF  DEFI9,DEFI16,DEFI18
+       REF  DEFSID,DEFDRV
+       REF  DEFVER,INDRV,OUTDRV
+       REF  RREG,WREG,VERIFY,CAT
+       REF  FCTNX,CONFIG,NUMTRK
+       REF  STPDRV,ALIAS,TITLE
+*
+       DXOP SYS,0
+
+       B    @START            Execute program
+*
+* EQUates
+MAINWS EQU  >F000             Main workspace
+XSUBWS EQU  >F020             Low level subroutine WS
+MAPPER EQU  >F110             9640 Memory Mapper
+VIDBUF EQU  >E000             Start of buffer for VID XOPs
+VDPA   EQU  >F10A             VDP Address port
+VDPD   EQU  >F108             VDP Data port
+LSTR15 EQU  >008F             9995 op-code for LST  R15
+WID    EQU  40                Width of screen
+
+* DATA
+*  Constant
+*   XOP library numbers
+KEY    DATA 5                 Keyscan
+VID    DATA 6                 Video Library
+MEMXOP DATA 7                 Memory
+DSRXOP DATA 8                 DSR
+*   Character definition patterns
+CHAPAT DATA >0000,>0C10,>2044,>4848   20
+       DATA >0000,>FC00,>00FC,>0000   21
+       DATA >0000,>C020,>1088,>4848   22
+       DATA >4848,>4848,>4848,>4848   23
+       DATA >4848,>4420,>100C,>0000   24
+       DATA >4848,>8810,>20C0,>0000   25
+       DATA >4848,>4440,>4044,>4848   26
+       DATA >4848,>8808,>0888,>4848   27
+*   BLWP entries
+VWTR   DATA VDPWS,VWTR1
+VSBW   DATA VDPWS,VSBW1
+VMBW   DATA VDPWS,VMBW1
+VDPFIL DATA VDPWS,VDPF1
+*   Miscellanious
+MENUAD DATA 7,DCPY,DMANY,FDSK
+       DATA RDIS,CAT,CONFIG,EXIT
+DWID   DATA WID
+D10    DATA 10
+*  Variable
+COPY1  DATA 0                 >FFFF = copy one disk, >0000 = copy many
+VIDMOD DATA 0
+PAGES  DATA 0
+LSTDRV DATA 0,0               Value at MAPPER+4, address
+
+* Buffers
+PAGLST BSS  3                 \ Page list
+MEMMAP BSS  253               /
+*
+SEC0   BSS  12                \
+SECTRK BSS  5                  |
+TRACKS BSS  1                  | Sector 0 buffer
+SIDES  BSS  1                  |
+DENS   BSS  237               /
+*
+VDPWS  BSS  >0020             VDP BLWP workspace
+INBUF  BSS  12
+TEMP   BSS  40
+OUTLST BSS  12                Ten drives, max; + length byte + null terminator
+*
+*
+* BYTE
+*  Constant
+H00    BYTE >00
+H01    BYTE >01
+H02    BYTE >02
+H04    BYTE >04
+H06    BYTE >06
+H09    BYTE >09
+H0A    BYTE >0A               Down arrow
+H0B    BYTE >0B               Up arrow
+H0C    BYTE >0C
+H0F    BYTE >0F               F9 key
+H10    BYTE >10
+H12    BYTE >12
+DB20   BYTE >14
+DB21   BYTE >15
+DB22   BYTE >16
+DB23   BYTE >17
+DB24   BYTE >18
+DB25   BYTE >19
+H1A    EQU  $
+DB26   BYTE >1A
+H1B    EQU  $
+DB27   BYTE >1B
+H20    BYTE >20
+H30    BYTE >30
+H31    BYTE >31
+H33    BYTE >33
+H38    BYTE >38
+H39    BYTE >39
+SLASH  BYTE '/'
+DASH   BYTE '-'
+H94    BYTE >94
+HBA    BYTE >BA
+HFF    BYTE >FF
+*  Variable
+INMEM  BYTE >00               >FF = disk in memory, >00 = not
+RSPAGE BYTE >00               ### Saved page number for Rsbug ###
+ILACEI BYTE >00               Input interlace
+SKEWI  BYTE >00               Input skew
+ILACEO BYTE >00               Output interlace
+SKEWO  BYTE >00               Output skew
+CURDRV BYTE >00               Current physical drive
+VERPAG BYTE >00               Page used for verify
+
+* TEXT
+NAMTXT BYTE 2,12
+       TEXT 'H y p e r C o p y`'
+ACCENT EQU  $-1
+       BYTE 4,7
+       TEXT 'Copyright 1988 by Mike Dodd~'
+TILDA  EQU  $-1
+*
+MENUT  BYTE 8,6
+       TEXT '1. Copy disk to disk\\'
+BSLASH EQU  $-1
+       TEXT '2. Copy disk to disk(s)\\'
+       TEXT '3. Format disk\\'
+       TEXT '4. Read interlace and skew\\'
+       TEXT '5. Catalog disk\\'
+       TEXT '6. Configure defaults\\'
+       TEXT '7. Return to MDOS~'
+*
+DRVST1 BYTE 8,11
+       TEXT 'Copy disk to disk`'
+       BYTE 11,3
+       TEXT 'Input drive:\'
+       TEXT 'Name:`'
+       BYTE 16,3
+       TEXT 'Output drive:~'
+DRVST2 BYTE 13,3
+       TEXT 'Input interlace:\'
+       TEXT 'Input skew:~'
+DRVST3 BYTE 17,3
+       TEXT 'Output interlace:\'
+       TEXT 'Output skew:~'
+*
+DMANYT BYTE 8,10
+       TEXT 'Copy disk to disk(s)`'
+       BYTE 11,3
+       TEXT 'Input drive:\'
+       TEXT 'Name:`'
+       BYTE 16,3
+       TEXT 'Output drives:~'
+DMANT1 BYTE 21,5
+       TEXT 'Entire disk loaded into memory.~'
+DMANT2 BYTE 21,8
+       TEXT 'Multi-pass copy required.~'
+*
+INSIT  BYTE 21,5
+       TEXT 'Insert master disk into drive~'
+       BYTE 0                                       Indicate INDRV
+*
+INSOT  BYTE 21,5
+       TEXT 'Insert copy disk into drive~'
+       BYTE 1                                       Indicate OUTDRV
+*
+INSBLK BYTE 21,5
+       TEXT '                               ~'
+*
+ACTXT  BYTE 21,5
+       TEXT 'Press F6, F8 or <ESC> to abort~'
+*
+RDIST  BYTE 8,9
+       TEXT 'Read interlace and skew`'
+       BYTE 11,3
+       TEXT 'Drive (1-4):\'
+       TEXT 'Name:\'
+       TEXT 'Interlace:\'
+       TEXT 'Skew:~'
+*
+FDSKT1 BYTE 9,15
+       TEXT 'Format disk`'
+       BYTE 11,3
+       TEXT 'Drive:\'
+       TEXT 'Disk name:\'
+       TEXT 'Tracks:\'
+       TEXT 'Sides:\'
+       TEXT 'Density:\'
+       TEXT 'Sectors per track:~'
+FDSKT2 BYTE 17,3
+       TEXT 'Interlace:\'
+       TEXT 'Skew:~'
+*
+ERRLST DATA ERR0,ERR1,ERR2,ERR3
+ERR0   BYTE 21,10
+       TEXT 'Error. Press any key.~'
+ERR1   BYTE 21,3
+       TEXT 'Write protect error. Press any key.~'
+ERR2   BYTE 21,7
+       TEXT 'Disk error. Press any key.~'
+ERR3   BYTE 21,3
+       TEXT 'Illegal parameters. Press any key.~'
+*
+CRTXT  BYTE 8,15
+       TEXT 'THANK YOU`'
+       BYTE 10,3
+       TEXT '  Those of you who purchased this\'
+       TEXT 'program already know this. Those\'
+       TEXT 'who chose to steal it, however,\'
+       TEXT 'are probably not aware of the\'
+       TEXT 'people who helped out. They are:\'
+       TEXT 'Jeff Guide, J. Peter Hoddie, Jerry\'
+       TEXT 'Coffey, Scott Darling, Al Beard,\'
+       TEXT 'John Johnson, and ESPECIALLY Paul\'
+       TEXT 'Charlton, without whose help this\'
+       TEXT 'program would not be what it is.~'
+*
+VALDRV TEXT '1234ABCDEFGHIJKLMNOPQRSTUVWXYZ'
+       BYTE >00
+*
+VALNUM TEXT '0123456789'
+       BYTE >00
+*
+VALPHD TEXT '1234'
+       BYTE >00
+*
+VALSD  TEXT 'SD'
+       BYTE >00
+*
+VAL68  TEXT '68'
+       BYTE >00
+*
+VALYN  TEXT 'YN'
+       BYTE >00
+*
+DSKSP  TEXT 'DSK '            Used for format disk
+*
+       EVEN
+*
+DJMP   JMP  $+6               \ Used to patch code by format disk
+DNOP   NOP                    /
+
+ERROR  MOV  R0,@MAINWS+R8+R8  Save into R8
+       LWPI MAINWS
+       BL   @RSETDS
+       BLWP @RSMEM            What the hell.
+       LIMI 2
+ERRORX JMP  $+6
+       B    @FD03             For format routine
+       CI   R8,3
+       JLE  ERROR1            In range as a legal error
+       CLR  R8                Set to misc. error
+ERROR1 SLA  R8,1
+       MOV  @ERRLST(R8),@ERROR2     Get address
+       BL   @SCRGEN
+ERROR2 DATA >0000
+       LI   R0,3
+ERROR3 SYS  @KEY
+       JNE  ERROR3            Nothing new pressed
+       B    @MENU             Return to menu
+
+VWTR1  LIMI 0
+       MOV  *R14+,R0
+       ORI  R0,>8000
+       SWPB R0
+       MOVB R0,@VDPA
+       SWPB R0
+       MOVB R0,@VDPA
+       RTWP
+
+VSBW1  BL   @VXBW
+       MOVB R1,@VDPD          Write byte to VDP
+       RTWP
+
+VMBW1  BL   @VXBW
+VMBW2  MOVB *R1+,@VDPD
+       DEC  R2
+       JNE  VMBW2
+       RTWP
+
+VDPF1  BL   @VXBW
+VDPF2  MOVB R1,@VDPD
+       DEC  R2
+       JNE  VDPF2
+       RTWP
+
+VXBR   MOV  *R13,R0
+       MOV  @2(R13),R1
+       MOV  @4(R13),R2
+       JMP  SVRA
+*
+VXBW   MOV  *R13,R0
+       MOV  @2(R13),R1
+       MOV  @4(R13),R2
+*
+SVWA   ORI  R0,>4000
+SVRA   LIMI 0
+       SWPB R0
+       MOVB R0,@VDPA
+       SWPB R0
+       MOVB R0,@VDPA
+       ANDI R0,>3FFF
+       RT
+
+CLS    STST R15
+       MOV  R11,R10
+       CLR  R0                VDP Write Address >0000
+       LIMI 0                 Interrupts off
+       BL   @SVWA             Set VDP write address
+       LI   R0,WID*24         Full screen
+CLS1   MOVB @H20,@VDPD        Write space
+       DEC  R0
+       JNE  CLS1
+*  now write border to screen
+       LI   R0,1
+       BL   @SVWA
+       MOVB @DB20,@VDPD
+       LI   R0,36
+CLS2   MOVB @DB21,@VDPD
+       DEC  R0
+       JNE  CLS2
+       MOVB @DB22,@VDPD
+       LI   R1,22             22 rows of the following stuff
+       LI   R0,WID+1          Starting there
+CLS3   BL   @SVWA
+       MOVB @DB23,@VDPD
+       AI   R0,37
+       BL   @SVWA
+       MOVB @DB23,@VDPD
+       AI   R0,3
+       DEC  R1
+       JNE  CLS3
+       BL   @SVWA
+       MOVB @DB24,@VDPD
+       LI   R0,36
+CLS4   MOVB @DB21,@VDPD
+       DEC  R0
+       JNE  CLS4
+       MOVB @DB25,@VDPD
+* go back to write line at row 6
+       LI   R0,6*WID+1
+       BL   @SVWA             Set write address
+       MOVB @DB26,@VDPD
+       LI   R0,36
+CLS5   MOVB @DB21,@VDPD
+       DEC  R0
+       JNE  CLS5
+       MOVB @DB27,@VDPD
+*  write title
+*  jump into SCRGEN to do this
+       LI   R0,NAMTXT         Address of info
+       MOV  R10,R11           Restore return address
+       JMP  SCR2              Hop right in!
+
+SCRGEN STST R15
+SCRX   MOV  *R11+,R0
+       JMP  SCR2
+SCR1   MOVB *R0+,R1           Get character
+       CB   R1,@ACCENT        Accent mark?
+       JEQ  SCR2              Yes - set row & column
+       CB   R1,@BSLASH        Back slash?
+       JEQ  SCR3              Yes - line feed
+       CB   R1,@TILDA         Tilda?
+       JEQ  SCR5              Yes - end
+       MOVB R1,@VDPD
+       JMP  SCR1
+* Set row and column
+SCR2   MOVB *R0+,R1           Get row
+       SRL  R1,8
+       MPY  @DWID,R1
+       MOVB *R0+,R1           Get column
+       SRL  R1,8
+       A    R1,R2
+       LIMI 0                 Make sure interrupts are off
+       JMP  SCR4
+* Line feed
+SCR3   AI   R2,WID            Add one line to last set VDP address
+* Set VDP write address
+SCR4   SWPB R2
+       MOVB R2,@VDPA
+       SWPB R2
+       ORI  R2,>4000
+       MOVB R2,@VDPA
+       JMP  SCR1
+* Exit
+SCR5   DATA LSTR15
+       RT
+
+*
+* Ask user for input
+*  In: DATA >xxxx    Points to table where first word is screen address,
+*                    second word is validation string pointer
+*                    third word is maximum length of field
+*                    List terminated with >0000 in first word
+*      DATA >xxxx    Up arrow address
+*   INBUF has default entries (length byte + 2 chars)
+*   Stores responses in INBUF
+ASK    MOV  *R11,R3           Get pointer to table
+       LI   R4,INBUF
+*  Display all defaults on screen
+ASK1   MOV  *R3+,R0           Get screen address
+       JEQ  ASK2              No more
+       MOV  R4,R1
+       MOVB *R1+,R2           Get length byte
+       SRL  R2,8
+       BLWP @VMBW             Write to screen
+       AI   R4,3              Next entry
+       C    *R3+,*R3+         Past validation string and max length
+       JMP  ASK1
+ASK2   MOV  *R11+,R3          Get pointer
+       LI   R4,INBUF          Input buffer
+ASK3   MOV  *R3+,R0           Get screen address
+       JEQ  ASK7              End of table
+       MOV  *R3+,@ASK4        Validation string
+       MOV  R4,R1             Input buffer thing
+       MOV  *R3+,R2           Maximum length
+       BLWP @INPUT
+ASK4   DATA >0000             Validation - filled in above
+       JNE  ASK6              No special key pressed
+       CB   R2,@H0B           Up arrow?
+       JEQ  ASK5              Yes
+       B    @MENU             Abort
+* Up arrow
+ASK5   AI   R3,-12            Back up
+       AI   R4,-3             Back up
+       CI   R4,INBUF          Did we go before beginning?
+       JHE  ASK3              Nope
+       MOV  *R11,R11          Get up arrow address
+       B    *R11              Go to that
+* <ENTER> pressed
+ASK6   AI   R4,3
+       JMP  ASK3              Get next
+ASK7   B    @2(R11)           Return
+*
+*
+INSI   LI   R0,INSIT
+       JMP  INSX
+INSO   LI   R0,INSOT
+INSX   STST R15
+       MOV  R11,@INSRET+2
+       BLWP @RSMEM            Restore memory for SYS call
+       BL   @SCR2             Write to screen
+       MOVB *R0+,R1           Get 0 or 1 for INDRV or OUTDRV
+       SRL  R1,8
+       MOVB @INDRV(R1),R1     Get drive
+       CB   R1,@H20           ASCII?
+       JHE  INSX1             Yes
+       AI   R1,>3000          Convert to ASCII
+INSX1  LI   R0,21*WID+35      Screen address
+       BLWP @VSBW
+       LIMI 2                 Enable interrupts for keyscan
+* Y'know, what would be really cool about here would be some sort of code
+* to clear the keyboard buffer so that anything the idiot user pressed
+* before the program got to this point won't be counted. However, I've
+* tried two methods, both of which I would have _sworn_ should've worked,
+* and neither has. So -- to hell with it.
+INSX4  CLR  R0
+       SYS  @KEY              Keyscan
+       JNE  INSX4             No new key pressed
+       BL   @SCRX             Don't re-save R15; this way, SCRX will
+*                                     restore our old interrupt mask
+       DATA INSBLK            Blank out message
+       BLWP @SVMEM            Re-save memory
+INSRET B    @0
+*
+* BL   @ACTION
+*  In: DATA >xxxx    Up arrow address
+*      DATA >xxxx    F8 address
+ACTION MOV  R11,R10           Save return address
+       BL   @SCRGEN           Generate text
+       DATA ACTXT
+ACT1   LI   R0,3
+       SYS  @KEY
+       JNE  ACT1
+       ANDI R1,>7F00          Mask out high bit
+       CB   R1,@H1B
+       JNE  ACT3              Not escape
+ACT2   B    @MENU             Back to main menu
+ACT3   CB   R1,@H0F           F9 key?
+       JEQ  ACT2              Yes - back to main menu
+       CB   R1,@H0B           Up arrow key?
+       JNE  ACT4              Nope
+       MOV  *R10,R10          Get up arrow address
+       JMP  ACT6              Execute that
+ACT4   CB   R1,@H0C           F6 key?
+       JNE  ACT5              No
+       C    *R10+,*R10+       Increment by four
+       JMP  ACT6
+ACT5   CB   R1,@H06           F8 key?
+       JNE  ACT1              No - try keyboard again
+       MOV  @2(R10),R10       Get F8 address
+ACT6   BL   @SCRGEN           Blank out prompt
+       DATA INSBLK
+       B    *R10              Execute whatever
+*
+SHOHED MOV  R11,R10           Save return address
+       STST R15
+       LIMI 0                 Turn interrupts off
+       LI   R0,12*WID+9       Screen addressition
+       LI   R1,SEC0           Sector 0 buffer
+       LI   R2,10             Ten characters
+       BLWP @VMBW             Write to screen
+       MOVB @H20,@VDPD        Write space
+       LI   R0,'SS'           Assume single sided
+TXTS   EQU  $-2
+       CB   @SIDES,@H02       Double sided?
+       JNE  SHOH1             No
+       LI   R0,'DS'           Double sided, then
+TXTD   EQU  $-2
+SHOH1  MOVB R0,@VDPD          Write character
+       SWPB R0
+       MOVB R0,@VDPD          For sided
+       LI   R0,'SD'           Assume single density
+       CB   @DENS,@H02        Double density?
+       JNE  SHOH2             No
+       LI   R0,'DD'           Double density, then
+SHOH2  MOVB R0,@VDPD          Write
+       SWPB R0
+       MOVB R0,@VDPD          Write
+       SWPB R0                Delay
+       MOVB @SLASH,@VDPD      Write a slash
+       MOVB @SECTRK,R0        Get sectors per track
+       LI   R2,TEMP
+       BL   @BINASC           Convert to ASCII
+       MOVB @TEMP+1,@VDPD     Write first digit
+       CB   *R2,@H01          One digit only?
+       JEQ  SHOH3             Yes
+       MOVB @TEMP+2,@VDPD     Write second digit
+SHOH3  MOVB @TRACKS,R0        Get tracks
+       MOVB @DASH,@VDPD       Write dash
+       LI   R2,TEMP
+       BL   @BINASC           Convert to ASCII
+       MOVB @TEMP+1,@VDPD     First digit
+       SWPB R0                Delay
+       MOVB @TEMP+2,@VDPD     Write second
+       SWPB R0                Delay
+       MOVB @H20,@VDPD        Space
+       DATA LSTR15            Restore interrupt mask
+       CB   @INDRV,@H04       Physical drive?
+       JH   SHOH4             Yup
+       MOVB @ILACEI,R0
+       LI   R2,TEMP
+       BL   @BINASC
+       LI   R0,13*WID+21
+       MOV  R2,R1
+       MOVB *R1+,R2
+       SRL  R2,8
+       BLWP @VMBW
+       MOVB @SKEWI,R0
+       LI   R2,TEMP
+       BL   @BINASC
+       LI   R0,14*WID+21
+       MOV  R2,R1
+       MOVB *R1+,R2
+       SRL  R2,8
+       BLWP @VMBW
+SHOH4  B    *R10              Return
+*
+* Binary to ASCII.
+*  Converts number in MSBy of R0 to two-digit number in *R2 (length byte
+*  first). If first digit 0, length will equal 1 and second digit placed
+*  in @1(R2)
+BINASC SRL  R0,8              To LSBy
+       MOV  R0,R1
+       CLR  R0
+       DIV  @D10,R0           Divided by 10
+       SWPB R1                To MSBy
+       AI   R1,>3000          ASCII
+       SLA  R0,8              To MSBy
+       JEQ  BINAS2            First digit is a 0
+       AI   R0,>3000          ASCII
+       MOVB @H02,*R2+         Is first digit a 0?
+       MOVB R0,*R2+
+       MOVB R1,*R2
+       DECT R2
+       RT
+BINAS2 MOVB @H01,*R2          Length
+       MOVB R1,@1(R2)         Only digit
+       RT                     Return
+*
+* ASCII to binary
+*  Converts number pointed to by *R0 (length byte first) to number in
+*  MSBy of R1
+ASCBIN MOVB *R0+,R3           Get length byte
+       SRL  R3,8              To LSBy
+       CLR  R1                Accumalator
+ASCBI1 MPY  @D10,R1           Multiply
+       MOV  R2,R1             Back to R1
+       MOVB *R0+,R2           Get next character
+       SRL  R2,8              To LSBy
+       AI   R2,->30           From ASCII to binary
+       A    R2,R1             Add
+       DEC  R3                Any more digits to worry about?
+       JNE  ASCBI1            Yup
+       SWPB R1                Place in MSBy
+       RT                     Return
+*
+*
+START  LWPI MAINWS
+       BLWP @SVMEM            Just for the hell of it (in case of ERROR)
+       CLR  R0                Get free pages
+       SYS  @MEMXOP
+       CI   R1,7              Has to be at least seven pages
+       JHE  START1
+       BLWP @>0000            Forget it
+START1 LI   R0,1              Get pages
+       MOV  R1,R5             Save # of pages
+       LI   R2,2              Starting at local page 2
+       CLR  R3                No need for fast ram
+       SYS  @MEMXOP           Get it
+       LI   R0,4              Get page map
+       LI   R1,PAGLST
+       MOV  R5,R2             Number to get
+       INCT R2                Count page 0 & 1
+       SYS  @MEMXOP           Do it
+       MOVB @PAGLST-1(R2),@VERPAG   Save last page for use with verify
+       AI   R5,-4             Execution pages 0-2 reserved, as is
+*                                       last physical page (for verify)
+       MOV  R5,@PAGES
+       MOVB @MAPPER+7,@RSPAGE            ### Save Rsbug page ###
+*      MOVB @PAGLST+2,@MAPPER+7              >E000 page for VID routines
+       MOVB @PAGLST+3,@MAPPER+3              _HAVE_ to do this !!!
+
+       LI   R12,>1100         Set CRU base
+       MOV  R12,@XSUBWS+R12+R12       Set in subroutine WS, as well
+
+* now, set up VDP in preparation for menu
+* use 40 column screen
+
+       LI   R0,1              Get video mode
+       SYS  @VID
+       MOV  R0,@VIDMOD        Save video mode so we can restore it on exit
+*
+       CLR  R0                Set video mode
+       LI   R1,4              Graphics II mode (for title screen)
+       SYS  @VID              Set it
+*
+       BL   @TITLE            execute title screen
+*
+  MOVB @PAGLST+2,@MAPPER+7              >E000 page for VID routines
+       CLR  R0                Set video mode
+       CLR  R1                Text I mode (40 column screen)
+       SYS  @VID
+*
+       BL   @MOVE
+       DATA CHAPAT,VIDBUF,8*8
+       LI   R0,>24            CharPatDefGet
+       LI   R1,VIDBUF         Buffer where character patterns are located
+       LI   R2,8              8 characters
+       LI   R3,20             Starting at char 20
+       CLR  R4                Define, not get
+       SYS  @VID              Go to it
+*
+       BLWP @VWTR             Set to VDP page 0
+       DATA >0E00
+*
+* set colors
+       LI   R0,>27            WriteTTY opcode
+       LI   R1,VIDBUF
+       LI   R2,2              Only two characters
+       MOVB @H30,*R1          who knows why? (ChrisF -- die)
+       MOVB @H1A,@1(R1)       CLS character
+       SYS  @VID
+*
+*
+* copy TRKDRV, STPDRV, and drive alias  tables
+       MOVB @H00,@MAPPER+4    Physical page 0
+       MOVB @>8441,@MAPPER+5  DSR execution page 1
+       MOV  @>A00A,R0         Pointer to STPDRV
+       MOV  @>A00C,R10        save pointer to drive alias table
+       MOV  R0,R1             Save
+       SRL  R1,13             Get page number
+       MOVB @>8440(R1),@LSTDRV        Save memory values
+       MOVB @>8441(R1),@LSTDRV+1      Next byte
+       MOVB @LSTDRV,@MAPPER+5
+       MOVB @LSTDRV+1,@MAPPER+6
+       ANDI R0,>1FFF          Mask out page number
+       AI   R0,>A000          Offset as we're using it + offset to STPDRV
+       BL   @MOVE1
+       DATA STPDRV,4          Move table
+       BL   @MOVE1            Move table
+       DATA TRKDRV,4
+* save pointer to LSTDRV
+       C    *R0+,*R0+         Point to LSTDRV
+       AI   R0,->2000         The SELDRV routine will load these pages
+*                                   into the >8000 and >A000 pages, not
+*                                   the >A000 and >C000 pages as is done
+*                                   here.
+       MOV  R0,@LSTDRV+2      Save
+* copy alias table
+       MOV  R10,R1            Save
+       SRL  R1,13             Get page number
+       MOVB @>8440(R1),@MAPPER+5    Load page
+       MOVB @>8441(R1),@MAPPER+6    Next page
+       ANDI R10,>1FFF         Mask out page number
+       AI   R10,>A000         Offset as we're using it
+       MOV  R10,R0
+       BL   @MOVE1
+       DATA ALIAS,10          Move table
+*
+       MOVB @HBA,@MAPPER+6    Always required
+
+       BL   @SETUP            set up parms for DISK/S portion
+*
+       MOVB @RSPAGE,@MAPPER+7         ### Restore Rsbug page ###
+*
+* MAIN MENU
+*
+MENU   LIMI 2                 Turn interrupts on
+       BL   @CLS              Clear screen
+       BL   @SCRGEN
+       DATA MENUT
+       SETO @FCTNX            Allow down arrow to be used as <ENTER>
+*
+       LI   R0,5
+MENU1  SYS  @KEY
+       JNE  MENU1             No new key pressed
+       CB   R1,@H94           CTRL-T?
+       JNE  MENU2
+       B    @THANKS           do the credit screen
+MENU2  CB   R1,@H31
+       JL   MENU1
+       SRL  R1,8
+       AI   R1,->30           ASCII->binary
+       C    R1,@MENUAD        Maximum number of options
+       JH   MENU1             Illegal
+       SLA  R1,1
+       MOV  @MENUAD(R1),R8    Get address
+       B    *R8               Execute
+*
+EXIT   MOV  @VIDMOD,R1        Get saved video mode
+       CLR  R0                Set video mode
+       SYS  @VID
+       BLWP @>0000            Return to MDOS
+*
+* 1- Disk Copy
+DCPYI  DATA 17*WID+21,VALNUM,2
+       DATA 18*WID+21,VALNUM,2
+       DATA 0
+DCPYO  DATA ILACEO,SKEWO,0
+DBRAN  DATA >0460             branch instruction
+DCREDO DATA >0000
+OUTPOI DATA >0000
+DCPY   BL   @CLS
+       BL   @SCRGEN
+       DATA DRVST1
+       SETO @COPY1
+       JMP  DCPY0B
+DMANY  BL   @CLS
+       BL   @SCRGEN
+       DATA DMANYT
+       CLR  @COPY1
+       MOVB @H00,@OUTLST      clear output list
+* r8 is either dcpy or dmany ... as selected by menu (see label MENU2)
+DCPY0B MOV  R8,@DCREDO        Address to go back to on up arrow or F8 key
+       LI   R1,INBUF
+       MOVB @H01,*R1+
+       MOVB @INDRV,*R1
+       CB   *R1,@H04
+       JH   DCPY0A
+       AB   @H30,*R1
+DCPY0A LI   R0,11*WID+21
+       DEC  R1                Input drive
+       LI   R2,1              Maximum length
+       BLWP @INPUT            Read a line from screen
+       DATA VALDRV            Valid chars for drive
+       JEQ  MENU              Back to menu (either ESC, F9, or up)
+*  Now have input drive number
+DCPY1  MOVB @1(R1),R3         Get input drive number
+       CB   R3,@H39           Numeric?
+       JH   DCPY2             No
+       AI   R3,->3000         Convert to binary
+       BL   @SCRGEN           Show input interlace & skew prompts
+       DATA DRVST2
+DCPY2  MOVB R3,@INDRV         Set input drive number
+       BL   @GPI              Get parms, input drive
+       BL   @SHOHED           Show header
+       MOVB @H00,@INMEM       Entire disk most assuredly _not_ in memory
+       ABS  @COPY1            Copy only 1?
+       JNE  DCPY3             Yes
+*   If can fit entire thing in memory, read it in
+       MOVB @TRACKS,R0
+       SRL  R0,8
+       C    R0,@NUMTRK
+       JH   DCPY2A            Can't
+       LIMI 0
+       CLR  @RREG
+       BL   @READ
+       LIMI 2                 Turn interrupts back on
+       BL   @SCRGEN           Tell user entire disk sucked into memory
+       DATA DMANT1
+       JMP  DCPY3
+DCPY2A BL   @SCRGEN           Tell user will require multiple passes
+       DATA DMANT2                 (can't fit entire disk in memory)
+* Ask output drive
+DCPY3  LI   R0,17*WID+2       \
+       LI   R1,>2000           | Blank out output interlace & skew
+       LI   R2,WID-4           | prompts (in case up arrow used)
+       BLWP @VDPFIL           /
+       AI   R0,WID
+       BLWP @VDPFIL
+       LI   R1,OUTLST
+       LI   R2,10             Max if many copy
+       ABS  @COPY1            Copy only one?
+       JEQ  DCPY3C            Nope... lots... don't reset OUTLST, then.
+       MOVB @OUTDRV,R0        Get output drive
+       CB   R0,@H04           ASCII or binary?
+       JH   DCPY3A            ASCII
+       AI   R0,>3000          Convert to ASCII
+DCPY3A LI   R1,OUTLST
+       MOVB @H01,*R1          Default length
+       MOVB R0,@1(R1)         Default
+       LI   R2,1              Max length one
+DCPY3C LI   R0,16*WID+21
+       BLWP @INPUT
+       DATA VALDRV            Valid chars = 0-9 and A-Z
+       JNE  DCPY3B            No abort keys used
+       CB   R2,@H0B           Up arrow?
+       JEQ  DCPYRD            Yes
+       B    @MENU
+DCPYRD B    @DBRAN
+DCPY3B MOVB *R1+,R2           Get length of list
+       SRL  R2,8              To LSBy
+       CLR  R3                Assume no physical drives
+       A    R1,R2
+       MOVB @H00,*R2          Null terminator
+       S    R1,R2
+DCPY3D CB   *R1,@H39          ASCII or binary?
+       JH   DCPY3E            ASCII
+       SB   @H30,*R1          Convert to binary
+       SETO R3                Ask interlace & skew, since physical drive
+DCPY3E ABS  @COPY1
+       JNE  DCPY3F
+       MOVB @INMEM,R0         Is entire disk in memory?
+       JNE  DCPY3F            Yes . . . don't worry about it, then.
+       CB   *R1,@INDRV        On multiple copies, input & output drive
+       JNE  DCPY3F               _MUST_ not be equal.
+* check -- if single copy, then don't reset outlist
+* this can be entered by an up arrow from the interlace prompt -- thus
+* this code
+DCPY3G ABS  @COPY1
+       JNE  DCPY3             one copy -- don't reset anything, then
+       MOVB @H00,@OUTLST      null output list length
+       JMP  DCPY3
+DCPY3F INC  R1
+       DEC  R2
+       JNE  DCPY3D
+       ABS  R3                Any physical drives?
+       JEQ  DCPY5             No... only logical <weird>
+       BL   @SCRGEN
+       DATA DRVST3
+       LI   R3,DEFI9          DEFault, Interlace for 9 sec/trk
+       CB   @DENS,@H01        Single density?
+       JEQ  DCPY4             Yes
+       LI   R3,DEFI18         OK, then . . . 18 sec/trk?
+       CB   @SECTRK,@H12
+       JEQ  DCPY4             Yup
+       LI   R3,DEFI16         16 sec/trk, then . . . whatever.
+DCPY4  MOVB *R3+,R0           Get interlace
+       LI   R2,INBUF
+       BL   @BINASC           Convert to ASCII
+       MOVB *R3,R0            Get skew
+       LI   R2,INBUF+3
+       BL   @BINASC
+       BL   @ASK              Ask for input
+       DATA DCPYI             Screen table address
+       DATA DCPY3G            Up arrow address
+       LI   R4,INBUF
+       LI   R5,DCPYO
+DCPY5  MOV  R4,R0             Get address of input buffer
+       BL   @ASCBIN           Convert to binary
+       MOV  *R5+,R0           Get address to store
+       MOVB R1,*R0            Store number
+       AI   R4,3              Next input location
+       MOV  *R5,R0            Anymore?
+       JNE  DCPY5             Yes
+*
+DCPY6  LIMI 2
+       BL   @ACTION           Make sure we really want to do this
+       DATA DCPY3G            Up arrow response
+       DATA DBRAN             F8 response
+       LIMI 0                 Turn off interrupts
+       CLR  @RREG             Starting track
+       CLR  @WREG             Starting track
+       LI   R0,OUTLST+1
+       MOV  R0,@OUTPOI        Save
+DCPY7  MOVB @INMEM,R0         Entire disk in memory?
+       JNE  DCPY8             Yes -- no need to read it in
+       BL   @READ             Read from disk
+DCPY8  MOV  @OUTPOI,R0
+       MOVB *R0,@OUTDRV       Get output drive
+       CB   @INDRV,*R0        Equal?
+       JNE  DCPY9             No . . . not single drive system
+       BL   @INSO             Insert output disk
+DCPY9  BL   @WRITE            Write to disk
+       CB   @WREG,@TRACKS     Did we finish the disk?
+       JEQ  DCPYA             Yes
+       CB   @INDRV,@OUTDRV    Equal?
+       JNE  DCPY7             No
+       BL   @INSI             Insert input disk
+       JMP  DCPY7
+DCPYA  INC  @OUTPOI
+       MOV  @OUTPOI,R0
+       CLR  @RREG
+       CLR  @WREG
+       MOVB *R0,R0            Null?
+       JNE  DCPY7             No . . . keep going
+       ABS  @COPY1
+       JEQ  DCPY6
+GMENU1 B    @MENU             Go to menu
+*
+* RDIS - Read interlace and skew of floppy only
+*
+RDIS   BL   @CLS
+       BL   @SCRGEN
+       DATA RDIST             All sorts of stuff
+       MOVB @INDRV,@TEMP+4    Save this
+RDIS0  LI   R0,11*WID+16      Screen address
+       LI   R1,TEMP           Temp buffer
+       MOVB @H00,*R1          Null length input
+       LI   R2,1              Max length = 1
+       BLWP @INPUT            Read a line from the screen
+       DATA VALPHD            Valid are physical drives _only_
+       JNE  RDIS2             Abort key not used
+RDIS1  MOVB @TEMP+4,@INDRV    Restore default input drive
+       JMP  GMENU1            Go back to menu
+RDIS2  MOVB @1(R1),@INDRV     Input drive
+       SB   @H30,@INDRV       Convert to binary
+       BL   @GPI              Read parms
+       BL   @SHOHED           Show disk header
+       MOVB @H00,@INMEM       We killed sector 0, so don't allow that
+       JMP  RDIS0             Re-ask drive number
+*
+* FDSK - Format disk
+*
+FD09I  DATA 14*WID+14,VALSD,1
+       DATA 15*WID+14,VALSD,1
+       DATA >0000
+FD16I  DATA 17*WID+14,VALNUM,2
+       DATA 18*WID+14,VALNUM,2
+       DATA >0000
+FD16O  DATA ILACEO,SKEWO,0
+FDSK   BL   @CLS
+       BL   @SCRGEN
+       DATA FDSKT1
+FD00   MOVB @INDRV,R0
+       LI   R1,TEMP
+       MOVB @H01,*R1
+       CB   R0,@H04
+       JH   FD01
+       AI   R0,>3000
+FD01   MOVB R0,@1(R1)
+       LI   R0,11*WID+14      Drive
+       LI   R2,1              Max length
+       MOVB @H00,*R1
+       BLWP @INPUT            Get input
+       DATA VALDRV            Valid are A-Z and 1-4
+       JEQ  GMENU1            Abort
+       INC  R1                Point to drive
+       CB   *R1,@H39
+       JH   FD02
+       SB   @H30,*R1          Convert to binary
+       BL   @SCRGEN
+       DATA FDSKT2            Display interlace & skew prompts
+FD02   MOVB @TEMP+1,@INDRV    So we can read sector 0 of it
+       MOVB @TEMP+1,@OUTDRV   So we can format it
+       MOV  @DNOP,@ERRORX     Patch out error hook
+       MOVB @H00,@INMEM       Sector 0 is trashed
+       BL   @GPI              Get parms
+FD02A  BL   @MOVE             Move data
+       DATA SEC0,TEMP+1,10
+       MOVB @H0A,@TEMP        Set default length
+       JMP  FD04
+*  Comes here if read attempt failed (error)
+FD03   MOVB @H00,@TEMP        Set default length
+       LI   R12,>1100
+       SBZ  0
+FD04   MOV  @DJMP,@ERRORX     Patch error hook back in
+       LI   R0,12*WID+14      Disk name prompt
+       LI   R1,TEMP
+       LI   R2,10             Max length
+       BLWP @INPUT
+       DATA >0000             Anything is valid
+       JNE  FD05              No abort keys used
+       CB   R2,@H0B           Up arrow?
+       JEQ  FDSK              Yes
+GMENU2 B    @MENU             Go back to menu
+FD05   BL   @MOVE             Move disk name to SEC0
+       DATA TEMP+1,SEC0,10
+*  Ask tracks
+FD06   LI   R2,TEMP           Location to store default tracks
+       LI   R0,>2800          Assume 40 tracks
+       LI   R4,INSBLK+2       Default sides & density (blank field)
+       MOVB @INDRV,R1         Get drive number
+       CB   R1,@H04           Physical drive?
+       JH   FD07              Nope
+       SRL  R1,8              To LSBy
+       DEC  R1
+       MOVB @TRKDRV(R1),R0    Get maximum number of tracks
+FD07   BL   @BINASC           Convert to ASCII
+       MOV  R2,R1             CPU location
+       LI   R0,13*WID+14      VDP location
+       LI   R2,2              Two digits, max
+       BLWP @INPUT
+       DATA VALNUM
+       JNE  FD08              No abort keys used
+       CB   R2,@H0B           Up arrow?
+       JEQ  FD02A             Yes... ask disk name again
+GMENU3 JMP  GMENU2            Back to menu
+FD08   MOV  R1,R0             CPU location
+       BL   @ASCBIN           To binary
+       MOVB R1,@TRACKS        That's done with....
+*  Get sides and density
+FD09   MOVB @H01,@INBUF
+       MOVB @H01,@INBUF+3
+       MOVB @INDRV,R1
+       SRL  R1,8
+       DEC  R1
+       AI   R1,DEFSID
+       MOVB *R1,@INBUF+1      Sides default
+       MOVB @4(R1),@INBUF+4   Density default
+       BL   @ASK
+       DATA FD09I
+       DATA FD06              Up arrow address
+       LI   R0,INBUF+1
+       LI   R1,SIDES
+       LI   R2,2
+FD10   LI   R3,>0100          Assume single
+       CB   *R0+,@TXTS        'S' or 'D'?
+       JEQ  FD11
+       SLA  R3,1              Make it double
+FD11   MOVB R3,*R1+
+       INCT R0
+       DEC  R2
+       JNE  FD10
+*  If double density, ask for sectors per track
+*  Default is 18
+FD12   CB   @DENS,@H01        Single density?
+       JEQ  FD15              Yup
+       LI   R0,16*WID+22      Screen address
+       LI   R1,>3100          '1'
+       BLWP @VSBW
+       INC  R0
+       LI   R1,TEMP
+       LI   R2,1              Max length = 2
+       MOVB @H01,*R1
+       MOVB @H38,@1(R1)
+       BLWP @INPUT
+       DATA VAL68
+       JNE  FD13
+       CB   R2,@H0B           Up arrow?
+       JEQ  FD09              Yup
+GMENU4 JMP  GMENU3
+FD13   MOVB @1(R1),R0
+       SRL  R0,8              To LSBy
+       CI   R0,>36            is it a '6'?
+       JEQ  FD14              Yes
+       MOVB @H12,@SECTRK      Sectors per track = 18
+       JMP  FD16
+FD14   MOVB @H10,@SECTRK      Sectors per track = 16
+       JMP  FD16
+FD15   MOVB @H09,@SECTRK      Sectors per track = 9
+       LI   R0,16*WID+22
+       LI   R1,>3900
+       BLWP @VSBW
+       INC  R0
+       LI   R1,>2000
+       BLWP @VSBW
+*  If physical drive, ask interlace and skew
+FD16   CB   @INDRV,@H04
+       JH   FD19              Logical drive
+       LI   R3,DEFI9          DEFault, Interlace for 9 sec/trk
+       CB   @DENS,@H01        Single density?
+       JEQ  FD17              Yes
+       LI   R3,DEFI18         Assume 18 sec/trk, then
+       CB   @SECTRK,@H12      Is it really?
+       JEQ  FD17              Yup
+       LI   R3,DEFI16         Ok, then . . . 16 sec/trk <last guess>
+FD17   MOVB *R3+,R0           Get interlace
+       LI   R2,INBUF
+       BL   @BINASC           Convert to ASCII
+       MOVB *R3,R0            Get skew
+       LI   R2,INBUF+3
+       BL   @BINASC
+       BL   @ASK              Ask for input
+       DATA FD16I             Screen table address
+       DATA FD09              Up arrow address
+       LI   R4,INBUF
+       LI   R5,FD16O
+FD18   MOV  R4,R0             Get address of input buffer
+       BL   @ASCBIN           Convert to binary
+       MOV  *R5+,R0           Get address to store
+       MOVB R1,*R0            Store number
+       AI   R4,3              Next input location
+       MOV  *R5,R0            Any more?
+       JNE  FD18              Yes
+*  <sigh> . . . damned user interface almost done . . . just prepare
+*  all of sector 0 so it can be written to disk on completion of format.
+FD19   MOVB @SECTRK,R2        Sectors per track
+       SRL  R2,8
+       MOVB @TRACKS,R1        Tracks
+       SRL  R1,8
+       MPY  R1,R2
+       CB   @SIDES,@H01       Single sided?
+       JEQ  FD20              Yes
+       SLA  R3,1              Times 2
+FD20   MOV  R3,@SEC0+10       Total number of sectors
+       BL   @MOVE
+       DATA DSKSP,SEC0+13,4
+       LI   R0,SEC0+20        Start nulling this out
+       LI   R4,>0300          First byte of bitmap
+       CI   R3,1600           Can we fit in one bitmap?
+       JLE  FD21              Yes
+       SRL  R4,1
+       SRL  R3,1
+FD21   SRL  R3,3              Divided by 8
+       AI   R3,36             Plus unused bytes in sector 0
+FD22   MOVB @H00,*R0+
+       DEC  R3
+       JNE  FD22
+       MOVB R4,@SEC0+56       First byte of bitmap
+FD23   CI   R0,SEC0+256       At end of sector?
+       JEQ  FD24              Yes
+       MOVB @HFF,*R0+
+       JMP  FD23
+FD24   BL   @ACTION           Ask if we should really do this
+       DATA FD09              Up arrow
+       DATA FDSK              F8
+       BL   @FORMAT           Format the disk
+       LIMI 2                 Turn interrupts back on
+       JMP  FD24              Re-do action prompt
+*
+THANKS BL   @CLS
+       BL   @SCRGEN
+       DATA CRTXT
+       BL   @ACTION
+       DATA MENU
+       DATA MENU
+       B    @MENU
+*
+       END

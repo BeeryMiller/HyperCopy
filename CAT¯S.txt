@@ -1,0 +1,402 @@
+*** CAT/S ***
+*
+* Catalog disk from MDOS
+*
+       DEF  CAT,FILL,FILL1,FILL2,FILLER
+       DEF  ALIAS
+       REF  SCRGEN,CLS,MENU,MEMMAP
+       REF  MOVE,MOVER,MOVE1,MOVE2
+       REF  TEMP,INPUT,ERROR,MDOS11
+
+       DXOP SYS,0
+
+WID    EQU  40
+MAPPER EQU  >F110
+VIDBUF EQU  >E000
+MYWS   EQU  >F000
+
+D3     DATA 3
+KEY    DATA 5
+VID    DATA 6
+DSR    DATA 8
+UTIL   DATA 9
+MATH   DATA 10
+SAVWIN DATA 0,0,0,0
+NEWW1  DATA 8,3,22,36
+NEWW2  DATA 13,3,22,36
+       EVEN
+FLTBUF BSS  8*3
+CATPAB BYTE >00               opcode
+       BYTE >0D               Internal, Fixed, Relative
+       BYTE >00               Error code
+       BYTE >00               MSBy of buffer address
+       DATA CATBUF            Buffer
+       DATA >0000             Record number
+       DATA >0000             Use default record length
+       DATA >0000,>0000       CPu memory & char count
+       BYTE >00
+CATLEN BYTE >00               Length
+CATDEV BSS  40                Maximum length
+CATBUF BSS  255
+*
+TYPES  TEXT 'D/FD/VI/FI/VPRGDIREMU'
+H00    BYTE >00
+H01    BYTE >01
+H02    BYTE >02
+H0F    BYTE >0F
+H1B    BYTE >1B
+H28    BYTE >28
+H2E    BYTE >2E
+H31    BYTE >31
+H39    BYTE >39
+H40    BYTE >40
+SVPG7  BYTE >00
+H50    BYTE >50
+CATTXT BYTE 8,14
+       TEXT 'Catalog disk`'
+       BYTE 10,3
+       TEXT 'Device name:~'
+CATT1  BYTE >1A
+       TEXT 'Volume name: '
+VOLNAM BSS  10
+       BYTE >0D,>0A
+       TEXT 'Free: '
+FREE   BSS  6
+       TEXT '  Used: '
+USED   BSS  6
+       BYTE >0D,>0A,>0A
+       TEXT ' Filename   Size     Type    P'
+       BYTE >0D,>0A
+       TEXT '---------- ------ ---------- -'
+       BYTE >0D,>0A,>00
+FNAM   TEXT '           '
+SIZE   TEXT '       '
+TYPE   TEXT '    '
+RECSIZ TEXT '       '
+PROT   TEXT ' '
+       BYTE >0D,>0A,>00
+PRENT  TEXT '    Press any key to continue.'
+       BYTE >00
+DSKPAB BYTE 5
+       TEXT 'DSK'
+DSKDRV TEXT ' .'
+VPAG   BYTE >00
+ALIAS  BSS  10
+*
+       EVEN
+*
+CAT    BL   @CLS
+       BL   @SCRGEN
+       DATA CATTXT
+       LI   R0,11*WID+3
+       LI   R1,TEMP
+       LI   R2,34
+       MOVB @H00,*R1
+       BLWP @INPUT            Accept input
+       DATA >0000             Accept _anything_ as input (I mean, anything)
+       JNE  CAT01
+       B    @MENU
+CAT01  MOVB *R1+,R2           Get length
+       SRL  R2,8
+* if merely a number, then use DSKn. without parsing
+       CI   R2,1
+       JNE  CAT01A
+       CB   *R1,@H31
+       JL   CAT01A
+       CB   *R1,@H39
+       JH   CAT01A
+* find in alias table so as to convert from physical to logical
+       MOVB *R1,R1            Get drive number
+       AI   R1,->3000         ASCII to binary
+       LI   R0,ALIAS
+       LI   R2,>3000          Logical drive 0 (impossible)
+       LI   R3,10             Max length
+CAT01C CB   *R0+,R1
+       JEQ  CAT01D            Found it
+       AI   R2,>0100          Count (used for logical drive number)
+       DEC  R3
+       JNE  CAT01C
+       LI   R0,2
+       B    @ERROR
+CAT01D MOVB R2,@DSKDRV
+       BL   @MOVE
+       DATA DSKPAB,CATLEN,6
+       JMP  CAT01B
+CAT01A A    R1,R2             Point to char past last
+       MOVB @H00,*R2          Null terminated
+       LI   R2,CATLEN
+       MOVB @H28,*R2          Max legal length
+       LI   R0,8              Parse filename
+       CLR  R3                Parse normally (with device suffix)
+       SYS  @UTIL             Do it
+CAT01B MOVB @H00,@CATPAB      Open flag
+       CLR  @CATPAB+6
+       CLR  @CATPAB+8
+       BL   @GODSR            DSR access
+* Set text window so as not to murder our nice looking screen
+       LI   R0,>26            Get text window
+       SYS  @VID
+       LI   R4,SAVWIN
+       MOV  R0,*R4+
+       MOV  R1,*R4+
+       MOV  R2,*R4+
+       MOV  R3,*R4
+       LI   R0,NEWW1
+       MOV  *R0+,R1
+       MOV  *R0+,R2
+       MOV  *R0+,R3
+       MOV  *R0,R4
+       LI   R0,>25            Set text window
+       SYS  @VID              Do it
+*
+       LI   R1,MEMMAP
+       MOVB @MAPPER+7,@SVPG7
+       MOVB @-1(R1),@MAPPER+7 Execution page 7 ready for use
+       MOVB @H02,@CATPAB      Read opcode
+       BL   @GODSR            Do it
+       BL   @FILL
+       DATA VOLNAM,>2000,10
+       BL   @FILL
+       DATA FREE,>2000,6
+       BL   @FILL
+       DATA USED,>2000,6
+       LI   R0,CATBUF
+       LI   R1,VOLNAM
+       MOVB *R0+,R2           Get length
+       SRL  R2,8
+       BL   @MOVER
+       BL   @SETFLT           Set floater buffer
+*   Get used sectors
+       LI   R0,1              Subtract
+       LI   R1,FLTBUF
+       LI   R2,FLTBUF+16
+       LI   R3,FLTBUF+8
+       SYS  @MATH             Do it
+       BL   @CNV              Convert used sectors
+       DATA FLTBUF,USED,6
+       BL   @CNV              Free sectors
+       DATA FLTBUF+16,FREE,6
+*
+       BL   @WRTTXT
+       DATA CATT1             Write header
+* Set new windows so header doesn't scroll off
+       LI   R0,NEWW2
+       MOV  *R0+,R1
+       MOV  *R0+,R2
+       MOV  *R0+,R3
+       MOV  *R0+,R4
+       LI   R0,>25            Set text window
+       SYS  @VID              Do it
+*
+* Now, do the actual files <groan>
+CAT02  BL   @GODSR            DSR access
+       BL   @FILL
+       DATA FNAM,>2000,30     Clear it out
+       LI   R0,CATBUF
+       MOVB *R0+,R2           Get length
+       JEQ  CAT06             Null -- end of list . . . close and exit
+       LI   R1,FNAM
+       SRL  R2,8
+       BL   @MOVER            Filename moved
+       BL   @SETFLT           Set up floaters (what a bitch)
+*  do sector size
+       BL   @CNV
+       DATA FLTBUF+8,SIZE,6
+*  do record size
+       BL   @CNV
+       DATA FLTBUF+16,RECSIZ,6
+*  do type
+       CLR  R5                Assume positive (unprotected)
+       ABS  @FLTBUF
+       JGT  CAT02A            Yup, it was positive
+       SETO R5                Indicate negative
+CAT02A CB   @FLTBUF,@H40
+       JNE  CAT02B            Fuck that
+       MOVB @FLTBUF+1,R1
+       SRL  R1,8
+       DEC  R1
+       CI   R1,7
+       JHE  CAT02B            Screw that
+       MPY  @D3,R1            Multiply by three
+       LI   R0,TYPES
+       A    R2,R0             Point to correct type
+       BL   @MOVE1
+       DATA TYPE,3
+*  do protect yes/no
+CAT02B ABS  R5                See if was positive or negative number
+       JEQ  CAT03             Not protected
+       MOVB @H50,@PROT
+CAT03  BL   @WRTTXT
+       DATA FNAM
+*  see if a key being pressed
+       CLR  R0                Key mode
+       SYS  @KEY
+       JNE  CAT02             Nothing pressed
+       ANDI R1,>7F00
+       CB   R1,@H1B           <ESC> key?
+       JEQ  CAT05             Yes
+       CB   R1,@H0F           F9 key?
+       JEQ  CAT05             Yes
+CAT04  CLR  R0
+       SYS  @KEY
+       JNE  CAT04
+       JMP  CAT02
+*
+* abort key used. get out
+CAT05  BL   @CATFIN           Finish all stuff
+CAT05A B    @MENU
+*
+* normal exit
+CAT06  BL   @WRTTXT
+       DATA PRENT
+       BL   @CATFIN
+CAT07  CLR  R0
+       SYS  @KEY
+       JNE  CAT07
+       JMP  CAT05A            Return to main menu
+*
+*  Set FLTBUF (FLoaTer BUFfer)
+*    since g.d. MDOS requires that all floaters be on even byte
+*    boundaries, we have to scramble numbers everywhere... damn
+SETFLT MOV  R11,R10
+       LI   R0,CATBUF
+       MOVB *R0+,R1
+       SRL  R1,8
+       A    R1,R0             Point to first floater
+       INC  R0                Past length byte
+       BL   @MOVE1
+       DATA FLTBUF,8
+       INC  R0
+       BL   @MOVE2            Move second floater out
+       DATA 8
+       INC  R0
+       BL   @MOVE2
+       DATA 8
+       B    *R10
+*
+* Write text with WriteTTY
+WRTTXT MOV  *R11+,R0          Get address of string
+       LI   R1,VIDBUF
+WRTTX1 MOVB *R0+,*R1+
+       JNE  WRTTX1
+       LI   R0,>27
+       LI   R1,VIDBUF
+       CLR  R2                Null terminated
+       SYS  @VID
+       RT                     Return
+*
+* Convert floater to string
+CNV    MOV  *R11+,R1          Where the number is
+       LI   R2,TEMP           Temporary location for storage
+       BLWP @CNS              Do the conversion (use PaulC routine)
+       MOV  *R11+,R0          Get place to put it
+       MOV  *R11+,R1          Get length
+CNV1   MOVB *R2+,R3
+       JEQ  CNV2              Null -- we're done
+       DEC  R1                Decrement number of preceding spaces
+       JMP  CNV1              Keep going
+CNV2   LI   R2,TEMP
+       A    R1,R0             Preceding spaces
+CNV3   MOVB *R2+,R3
+       JEQ  CNV4              Done
+       MOVB R3,*R0+
+       JMP  CNV3
+CNV4   RT                     Return
+*
+FILL   MOV  *R11+,R0
+FILL1  MOV  *R11+,R1
+FILL2  MOV  *R11+,R2
+FILLER MOVB R1,*R0+
+       DEC  R2
+       JNE  FILLER
+       RT
+*
+CATFIN LI   R0,SAVWIN
+*      MOV  *R0+,R1
+*      MOV  *R0+,R2
+*      MOV  *R0+,R3
+*      MOV  *R0+,R4
+       LI   R0,>25            Set window
+ CLR R1
+ CLR R2
+ LI R3,23
+ LI R4,39
+       SYS  @VID
+       MOVB @H01,@CATPAB
+       MOVB @SVPG7,@MAPPER+7
+*  fall through to GODSR
+*
+GODSR  LI   R0,CATPAB
+       SYS  @DSR
+       MOVB @CATPAB+2,R0
+       SRL  R0,13
+       JNE  GODSR1
+       RT
+GODSR1 CI   R0,1
+       JEQ  GODSR2
+       LI   R0,2
+GODSR2 B    @ERROR
+*
+* PaulC 8/4/1988
+*
+* the quick and dirty: convert float to string
+*      in:  r1 = ^ 8 byte float
+*           r2 = ^ area for string (at least 20 bytes)
+*      out: ^r2 = ascii string, nil terminated
+*                 if float is negative, trashes it. (ABS first word)
+*
+CNSREG BSS  32
+D10    DATA 10
+CNS    DATA CNSREG,$+2
+       MOV  @2(R13),R1
+       MOV  @4(R13),R2
+*
+       MOV  *R1,R3            get leading word
+       JEQ  CNSZER
+       JLT  CNSNEG
+       JMP  CNSPOS
+*
+CNSNEG LI   R0,'- '
+       MOVB R0,*R2+
+       ABS  *R1
+*
+CNSPOS MOV  *R1,R3            now to get number of digits
+       SRL  R3,8
+       AI   R3,->0040         subtract bias
+       JLT  CNSZER            we don't do fractions...only integers
+*
+       MOV  R1,R4
+       INC  R4
+       SETO R0                flag for first digit in number
+*
+CNSL00 CLR  R5
+       MOVB *R4+,R6
+       SRL  R6,8
+       DIV  @D10,R5           now r5=high digit, r6= low digit
+       MOV  R5,R5
+       JNE  CNSJ00
+       MOV  R0,R0             test for leading digit
+       JNE  CNSJ01            it is first digit, ignore it.
+*
+CNSJ00 AI   R5,'0'            convert it to a digit
+       SLA  R5,8
+       MOVB R5,*R2+
+*
+CNSJ01 CLR  R0                first digit has been processed
+       AI   R6,'0'
+       SLA  R6,8
+       MOVB R6,*R2+
+*
+       DEC  R3
+       JOC  CNSL00            there are more bytes with sig. digits
+*
+       JMP  CNSRET
+*
+CNSZER LI   R0,'0 '
+       MOVB R0,*R2+           return a character
+CNSRET CLR  R0
+       MOVB R0,*R2            return the NIL terminator
+       RTWP
+*
+*
+       END

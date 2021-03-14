@@ -1,0 +1,119 @@
+*** COMPRESS/S ***
+*
+* compress a ti-artist picture
+*
+       DEF  START
+       REF  DSRLNK,VMBW,VMBR,VSBW
+PD1    DATA >0500,VB1,0,>2000,11
+       TEXT 'DSK2.PIC2_P'
+       EVEN
+PD2    DATA >0002,VB2,>8000,0,10
+       TEXT 'DSK5.PIC/C'
+HAB    BYTE >AB               repeat value
+       EVEN
+VB1    EQU  >1000
+VB2    EQU  >3000
+PAB1   EQU  >0F80
+PAB2   EQU  >0FC0
+IB     BSS  >1800
+OB     BSS  >1800
+*
+START  LWPI >F000             fast workspace
+       LI   R0,PAB1
+       LI   R1,PD1
+       LI   R2,21
+       BLWP @VMBW
+       LI   R0,PAB1+9
+       MOV  R0,@>8356
+       BLWP @DSRLNK
+       DATA 8
+       JNE  X1
+       BLWP @>0000            error
+X1     LI   R0,VB1
+       LI   R1,IB
+       LI   R2,>1800
+       BLWP @VMBR
+       LI   R5,OB
+* algorithm:
+*  get first byte
+*  if in last three bytes, then A
+*  is equal to second byte?
+*  if no, then A
+*  is equal to third byte?
+*  if no, then A
+*  count until end of bytes or end of table or max 256
+*  write repeat data
+*  loop to start
+* A:
+*  write byte
+*  loop to start
+X2     MOVB *R1,R0            get byte
+       CI   R1,IB+>17FD       in the last three bytes?
+       JHE  X5                yes -- don't worry about repeat
+       CB   R0,@1(R1)         equal?
+       JNE  X5                no
+       CB   R0,@2(R1)         equal?
+       JNE  X5                no
+       CLR  R2                count
+X3     CI   R1,IB+>1800       at end?
+       JEQ  X4                yes
+       CB   *R1,R0            equal?
+       JNE  X4                no
+       INC  R1                next
+       AI   R2,>0100
+       JNC  X3                keep going if it didn't wrap
+X4     MOVB @HAB,*R5+         repeat flag
+       MOVB R2,*R5+           count
+       MOVB R0,*R5+           byte
+       JMP  X6                check for end
+*
+X5     MOVB R0,*R5+
+       INC  R1
+*
+X6     CI   R1,IB+>1800
+       JNE  X2                keep going
+*
+* compression completed
+       MOVB @HAB,*R5+         \
+       MOVB @HAB,*R5+          | end flag
+       MOVB @HAB,*R5+         /
+       LI   R0,PAB2
+       LI   R1,PD2
+       LI   R2,20
+       BLWP @VMBW
+       AI   R0,9
+       MOV  R0,@>8356
+       BLWP @DSRLNK
+       DATA 8
+       LI   R0,PAB2
+       LI   R1,>0300
+       BLWP @VSBW             write opcode written
+       LI   R4,OB             output buffer
+*
+X7     LI   R0,VB2
+       MOV  R4,R1
+       LI   R2,>0080
+       BLWP @VMBW
+       LI   R0,PAB2+5
+       LI   R1,>8000
+       BLWP @VSBW
+       LI   R0,PAB2+9
+       MOV  R0,@>8356
+       BLWP @DSRLNK
+       DATA 8
+       AI   R4,>80
+       C    R4,R5
+       JL   X7                keep writing
+       LI   R0,PAB2
+       LI   R1,>0100          close op
+       BLWP @VSBW
+       LI   R0,PAB2+9
+       MOV  R0,@>8356
+       BLWP @DSRLNK
+       DATA 8
+*
+*
+       LWPI >83E0
+       B    @>6A
+       END
+

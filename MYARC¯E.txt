@@ -1,0 +1,68 @@
+*** MYARC/E ***
+
+DEFINITIONS:
+       BLWP @SVMEM            Save >F040->F0FF memory.
+       BLWP @RSMEM            Restore >F040->F0FF memory after SVMEM.
+       BLWP @SETR             Prepare for read sector.
+       BLWP @SETW             Prepare for write sector.
+       BLWP @SETI             Prepare for write track.
+       BLWP @TRK00            Steps drive to track 0. CRU off on exit.
+       BL   @RSETDS           Reset FDC. CRU off on exit.
+       BLWP @STEP             Steps drive in (towards track 79). If 40
+                                  track disk, 80 track drive; will
+                                  double step. Checks for busy. Assumes
+                                  CRU is on.
+       BLWP @STEPB            Same as BLWP @STEP, but does not check for
+                                  busy condition.
+       BL   @SELDRV           Selects disk drive. Updates MDOS LSTDRV.
+                                  In:  R1 = disk drive (word, 1-4)
+       BLWP @SEEK             Seeks from track to track. CRU off on exit.
+                                  Updates TRAK and FDTRAK.
+                                  In:  MSBy R0 = current track number
+                                       MSBy R1 = new track number
+       BSS  TRKDRV >0004      Tracks per drive (>28 or >50 each byte).
+       EQU  DCCTYP >0000      Disk controller type.
+                                  >0000 = MYARC Floppy Disk Controller
+                                  >0001 = CorComp Floppy Disk Controller
+                                  >0002 = TI Disk Controller
+       BL   @MOVE             Move bytes.
+                                  In:  DATA source address
+                                       DATA destination address
+                                       DATA length (in bytes)
+       BL   @MOVE1            Move bytes.
+                                  In:  R0 = source address
+                                       DATA destination address
+                                       DATA length (in bytes)
+       BL   @MOVE2            Move bytes
+                                  In:  R0 = source address
+                                       R1 = destination address
+                                       DATA length (in bytes)
+       BL   @MOVER            Move bytes
+                                  In:  R0 = source address
+                                       R1 = destination address
+                                       R2 = length (in bytes)
+       BLWP @RSEC             Read sector. Assumes CRU is on.
+                                  In:  R0 = sector number on track (>00 -
+                                            >11)
+                                       R1 = physical CPU address
+       BLWP @WSEC             Write sector. Assumes CRU is on.
+                                  In:  R0 = sector number on track (>00 -
+                                            >11)
+                                       R1 = physical CPU address
+       BLWP @WTRK             Write track. Assumes CRU is on.
+                                  In:  R0 = address of track data
+                                       R1 = length of track data
+       BLWP @RADDR            Read addresses. Builds list of sectors in
+                                  order they appear on disk (list is
+                                  terminated with >FF). Uses >7200 -
+                                  >726B as temporary buffer. CRU off on
+                                  exit.
+                                  In:  R0 = physical CPU address
+       BLWP @GETDEN           Get density. Reads disk and decides on
+                                  correct density to use. CRU off on exit.
+       BLWP @BUSY             Wait for FDC to finish command (includes
+                                  delay for registers to settle).
+       BVWP @BUSYND           Wait for FDC to finish command (no delay).
+       BYTE TRAK              Current track number.
+
+€†€Ï†Œ‘–› ¥ª¯´¹¾ÄÊÕÕ€Œ

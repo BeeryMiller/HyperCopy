@@ -1,0 +1,29 @@
+From:   BOS1A::TI994A       "Paul Charlton" 12-OCT-1988 21:19
+To:     MY9640,TI994A
+Subj:   dsr header stuff...ascii
+
+*
+       AORG >2000
+       JMP  PWRUP
+       B    @SET964
+       B    @INT964
+*
+* pointers to user settable parameter blocks
+*
+       DATA STPDRV,DRVMAP     step rates, low-level drive mapping
+       DATA VERWRT,INTMAP     verify on write, ramdisk header page
+       DATA SPPAG,SPPNT       spooler page list, table of spooler pointers
+       DATA RSMAP             low-level rs232/pio redirection
+       DATA STATAB            port configuation pointers
+       DATA TRKDRV
+       DATA LSTDRV
+       DATA TRACK1
+       DATA CTLTYP
+       DATA CTLBAS
+       DATA PIOTYP,PIOTY2
+
+*
+
+ HOPE THIS MADE IT OK, TELCO SUX FOR ASCII UPLOADS
+
+ PAULC

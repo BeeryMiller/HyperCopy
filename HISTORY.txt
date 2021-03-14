@@ -1,0 +1,173 @@
+The Copier
+History of the program
+
+As it exists on 8/19/88:
+      Read physical disk working
+      Write to physical disk working
+      Read logical disk working
+      Write to logical disk working
+      Format physical working
+      Format logical working
+      Write buffer working
+      MYARC Floppy Disk Controller driver working
+      Semi-user interface installed: allows copy with selection of input,
+         output drives and format skew and interlace. No echo of user
+         input, though.
+
+08/21/88: Modified J. Peter Hoddie's (JPH) screen input routine some. Now
+             theoretically works under MDOS. On single character entries,
+             does not require <ENTER>.
+
+08/22/88: Modified input routine some more. Will use a valid-character
+             string so as to only accept valid chars on approriate
+             inputs.
+          Wrote a lot of subroutines for user interface (e.g. BINASC,
+             ASCBIN, ASK, ACTION, others).
+          Wrote user interface for main option 1 (copy disk to disk).
+             The bloody thing is most friendly thing I've ever written --
+             and _such_ a bitch to code.
+
+08/23/88: User interface for main option 4 (read parms from disk) done.
+             Working great.
+          Wrote user interface for main option 3 (format disk).
+          Changed DISK/S to have separate calls for read and write.
+
+08/24/88: Got format disk working rather well.
+          Talked to J. Paul Charlton (JPC) for about 50 minutes on
+             Delphi. Got much info about how to speed things up.
+
+08/25/88: Disk read and write sped up a lot, thanks to JPC info. However,
+             can't get format any faster <sigh>. Formulas for timings are
+             as follows:
+          Revolutions Per Minute = 300
+          Revolutions Per Second = RPM / 60 = 300 / 60 = 5
+          Degrees Per Second = RPS * 360 = 5 * 360 = 1800
+          Optimum Skew = 50 degrees
+          Time for track access and step on read or write:
+             [ (360 * sides) + OS ] / DPS =
+             [ (360 * sides) + 50 ] / 1800
+          Time for disk: tracks * track & step time
+          Complete formula for read and write:
+             [ (360 * sides ) + OS ] * Tracks / DPS =
+             [ (360 * sides ) + 50 ] * Tracks / 1800
+          Time for format and step on a track, one side:
+             ( 360 * 2 ) / OS = 360 / 900 = 0.4 seconds
+          Time for format and step on a track, two sides (ideally):
+             ( 360 * 3 ) / OS = 360 / 600 = 0.6 seconds
+          However, I've not been able to obtain the "ideal" time for
+             format. On double sided, it should take three revolutions --
+             one for side 0, one for side 1, and one while stepping.
+             Unfortunately, it seems the computer isn't fast enough to
+             switch sides while on the index hole. Thus, two sides
+             actually takes _four_ revolutions. Hence, the updated
+             formula:
+          Time for format and step on a track, two sides (realistically):
+             ( 360 * 4 ) / OS = 360 / 450 = 0.8 seconds
+          Thus, on an 80 track disk, two sides, the time is taking:
+             Format: 0.8 * 80 =                               64.0 sec
+             Read: [ (360 * 2 ) + OS ] * Tracks / DPS =
+                   ( 720 + 50 ) * 80 / 1800 =                 34.2 sec
+             Write: same as read                              34.2 sec
+             TOTAL TIME:                                     132.4 sec
+          It's actually taking 136 seconds or so, so add about three
+             seconds for restoring to track 0 and stuff like that. It
+             definitely beats the 150 sec. it was taking before Paul told
+             me all this stuff, but it's not as good as the 120 sec. or so
+             it could be if my format could be made faster. But it will
+             do.
+
+08/26/88: JPC saves the day again. . . 80 track disk copy now taking only
+             1:56. His idea was to write and format on same pass: format
+             side 0, write side 0, format side 1, write side 1, then an
+             extra revolution for stepping. Thus, writing takes one
+             second per sector, total of 80 second + 34 for read + two
+             seconds for misc. stuff (like restoring to track 0) = 1:56.
+             Amazing.
+          Sent copy to Jerry Coffey (JC) for testing.
+
+08/29/88: Wrote Configure Defaults command -- mostly working.
+          Forced screen color set -- should make compatible with V1.08
+             of MDOS.
+
+08/30/88: Finished Configure Defaults command -- working really nice.
+          Separated default skew & interlace for 16 and 18 sec/trk.
+          Sent to JPC, JPH, and JC. (Notice how 'J' keeps showing up?)
+
+08/31/88: Changed format routine to use FDC 30ms Write Delay after step
+             and drive select. Sent to JC. JPC on vacation until 9/6/88.
+
+09/01/88: Copy disk to disk(s) working.
+          Sent to JPH and JC.
+
+09/05/88: Catalog disk working, except for display of floaters. This due
+             to fact that Lou Phillips fucked up in the writing of MDOS
+             math routines -- the float to string conversion doesn't work
+             worth a fuck.
+          Fixed problem with Copy disk to disk(s) not letting you use
+             input drive even when entire disk read into memory.
+          Sent to JPH and JC.
+
+09/06/88: Sent source code to DISK/S and MYARC/S to JPC.
+
+09/13/88: Modified format routine a bit to more closely resemble MDM3
+             format routine. Format doesn't always work for JC, yet
+             MDM3 always does. Thus, this attempt.
+          Sent to JPH, JPC, JC.
+
+09/14/88: Fixed a few problems that JPC found in source code.
+          Fixed bug with trying to format an unformatted disk.
+          Sent to JPH, JPC, JC.
+
+09/19/88: Changed to try to fix 3.5" drive problem. Sent to JPC.
+
+09/20/88: Another change for 3.5" drives. Sent to JPC, JC.
+
+09/23/88: Wrote CorComp device driver. Works great! <psyche!>
+
+09/25/88: Made minor adjustments to code.
+
+09/26/88: Changed busy command for restore and seek so as to give drive
+             plenty of time to execute its command.
+
+10/06/88: JPC fixed some bugs in MYARC/S. Fixed problem with 3.5" drives
+             by adding two gap bytes in format table.
+          Added routine to write message "Many thanks to PaulC. None to
+             JR." at end of tracks, one byte per track. JR is Jack Riley,
+             vice-president of MYARC and the bane of the existance of me,
+             Peter, and Paul.
+
+10/14/88: Added code to read and use step rates, rather than always using
+             fastest rate possible.
+          Added code to detect MDOS V1.10 or higher and, if using that
+             version, to display the numbers on a disk catalog.
+
+10/27/88: Fixed problem with CC step rate times
+          Added screen thanking those who helped. Accessed by hitting
+             CTRL-T from main menu. Includes rude slap at pirates.
+          Time running out . . . . 16 days until Chicago faire.
+
+10/31/88: Added yet another delay to the format routine.
+          Changed catalog routine to use PaulC's CFS (Convert Floater to
+             String) and my own four-line CFI (Convert Floater to Integer)
+             (was four lines due to fact that number could only be from
+             -7 to +7). Thus, catalog works with all versions of MDOS.
+
+11/02/88: Changed catalog routine to read drive alias table in MDOS so
+          that entering a drive number results in that physical drive
+          being accessed. This fixed the one big inconsistency in
+          HyperCopy (and the only thing that horribly upset JPH when he
+          was talking to me last night <grin>).
+
+11/04/88: Made more changes. Not working on JPH's system <fuck>.
+          Created title screen using TIA and custom-designed compression
+             algorithm.
+          Starting to feel anxious <understatement of the week>.
+
+11/07/88: Made final changes. Got to work on all systems!
+
+11/09/88: Fixed bug with asking it to access non-existant drive and bug
+             with defaults getting screwed up if entering same drive
+             for input and output on a multi-pass copy disk to disks
+             command.
+
+ÄêÄœÜêìñõ†•™Ø¥πæƒ ’’Äê
